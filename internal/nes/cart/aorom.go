@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // AOROM is mapper 7 — Rare/Nintendo's "AxROM" family. A single

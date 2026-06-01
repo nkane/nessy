@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // VRC7 implements Konami's mapper 85. The cart packages a VRC4-shape

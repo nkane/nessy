@@ -34,7 +34,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // accuracyCyclesPerFrame mirrors cmd/nessy's per-frame budget; the

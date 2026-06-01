@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // MMC1 is mapper 1 — Nintendo's first MMC ASIC. Unlocks Zelda 1,

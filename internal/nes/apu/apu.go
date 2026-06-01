@@ -26,7 +26,7 @@ package apu
 
 import (
 	"github.com/nkane/chippy/cpu"
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // Sample rate the APU's int16 ring buffer emits at. 44.1 kHz is the

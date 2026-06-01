@@ -8,7 +8,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
-	"github.com/nkane/chippy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/joypad"
 )
 
 // gamepadMap maps Ebiten standard-layout gamepad buttons to NES

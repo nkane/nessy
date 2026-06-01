@@ -12,7 +12,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
-	"github.com/nkane/chippy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/joypad"
 )
 
 // fastForwardMultiplier is the cycle-budget multiplier applied while

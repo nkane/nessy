@@ -24,7 +24,7 @@ import (
 	"sync"
 
 	"github.com/nkane/chippy/cpu"
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 const (

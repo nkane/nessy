@@ -3,7 +3,7 @@ package cart
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 func newMMC3ForRev(t *testing.T, sub uint8) *MMC3 {

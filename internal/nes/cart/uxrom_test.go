@@ -3,7 +3,7 @@ package cart
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // fillUxromRom builds a UxROM ROM with `prgBanks` 16 KiB PRG banks.

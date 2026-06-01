@@ -3,7 +3,7 @@ package cart
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 func fillCnromRom(t *testing.T, prgKB, chrBanks int) *nes.ROM {

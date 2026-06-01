@@ -3,7 +3,7 @@ package cart
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // fillMMC3Rom builds an MMC3 ROM with `prgBanks` 8 KiB PRG banks

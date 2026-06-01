@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nkane/chippy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/joypad"
 )
 
 // inputScript is a sparse timeline of held-button sets keyed by frame

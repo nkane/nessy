@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // UxROM is mapper 2 — Nintendo's "UNROM" / "UOROM" family. Used by

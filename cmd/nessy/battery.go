@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/nkane/chippy/internal/nes/cart"
+	"github.com/nkane/nessy/internal/nes/cart"
 )
 
 // batteryDir is the resolved directory used for .sav files. Empty

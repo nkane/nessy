@@ -11,7 +11,7 @@ import (
 	"os"
 
 	"github.com/nkane/chippy/dap"
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // readMemory must return cart PRG bytes, not the underlying ram

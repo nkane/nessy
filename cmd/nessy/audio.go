@@ -9,7 +9,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2/audio"
 
-	"github.com/nkane/chippy/internal/nes/apu"
+	"github.com/nkane/nessy/internal/nes/apu"
 )
 
 // apuStream is an io.Reader Ebiten's audio Player pulls PCM from on

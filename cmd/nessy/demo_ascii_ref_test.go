@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/joypad"
 )
 
 // asciiRefUpdate regenerates the committed ascii references instead of

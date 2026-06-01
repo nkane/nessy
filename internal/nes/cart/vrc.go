@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // VRC implements Konami's VRC2 + VRC4 mapper family (mappers 21, 22,

@@ -3,7 +3,7 @@ package ppu
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // twoTilePPU builds a PPU whose nametable 0 holds tile $00 in column

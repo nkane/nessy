@@ -26,7 +26,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // nmiInternal pries the unexported NMI poll state out of cpu.CPU so the

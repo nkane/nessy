@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/joypad"
 )
 
 // Pinned framebuffer SHAs for the input-echo demo. Two states matter:

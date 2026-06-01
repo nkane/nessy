@@ -3,7 +3,7 @@ package ppu
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // After SetRegion(PAL) the PPU wraps the frame at 312 scanlines, not

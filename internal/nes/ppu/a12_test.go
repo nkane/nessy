@@ -3,9 +3,9 @@ package ppu_test
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
-	"github.com/nkane/chippy/internal/nes/cart"
-	"github.com/nkane/chippy/internal/nes/ppu"
+	"github.com/nkane/nessy/internal/nes"
+	"github.com/nkane/nessy/internal/nes/cart"
+	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
 // countingSink counts MMC3 IRQ-source assertions + acks each so the

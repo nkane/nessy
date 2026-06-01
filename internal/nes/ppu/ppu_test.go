@@ -3,7 +3,7 @@ package ppu
 import (
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // fakeCart is a deterministic Cart for tests: pattern table backed by a

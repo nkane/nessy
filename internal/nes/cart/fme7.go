@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // FME-7 / Sunsoft 5B (mapper 69). Late-NES Sunsoft mapper used by

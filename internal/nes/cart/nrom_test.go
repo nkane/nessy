@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // fillROM constructs a *nes.ROM with PRG / CHR filled with caller-

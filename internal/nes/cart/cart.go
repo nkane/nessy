@@ -9,7 +9,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // Cartridge is the contract a mapper implements. The CPU bus and PPU

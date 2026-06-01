@@ -2,12 +2,12 @@ package main
 
 import (
 	"github.com/nkane/chippy/cpu"
-	"github.com/nkane/chippy/internal/nes"
-	"github.com/nkane/chippy/internal/nes/apu"
-	"github.com/nkane/chippy/internal/nes/cart"
-	"github.com/nkane/chippy/internal/nes/dma"
-	"github.com/nkane/chippy/internal/nes/joypad"
-	"github.com/nkane/chippy/internal/nes/ppu"
+	"github.com/nkane/nessy/internal/nes"
+	"github.com/nkane/nessy/internal/nes/apu"
+	"github.com/nkane/nessy/internal/nes/cart"
+	"github.com/nkane/nessy/internal/nes/dma"
+	"github.com/nkane/nessy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
 // cpuCyclesPerFrame mirrors cmd/nessy's constant — ~29830 cycles per

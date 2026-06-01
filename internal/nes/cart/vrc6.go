@@ -3,7 +3,7 @@ package cart
 import (
 	"fmt"
 
-	"github.com/nkane/chippy/internal/nes"
+	"github.com/nkane/nessy/internal/nes"
 )
 
 // VRC6 implements Konami's mapper 24 / 26 — VRC6a / VRC6b. Adds a

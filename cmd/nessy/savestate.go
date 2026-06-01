@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	"github.com/nkane/chippy/cpu"
-	"github.com/nkane/chippy/internal/nes/apu"
-	"github.com/nkane/chippy/internal/nes/cart"
-	"github.com/nkane/chippy/internal/nes/joypad"
-	"github.com/nkane/chippy/internal/nes/ppu"
+	"github.com/nkane/nessy/internal/nes/apu"
+	"github.com/nkane/nessy/internal/nes/cart"
+	"github.com/nkane/nessy/internal/nes/joypad"
+	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
 // stateMagic + stateVersion guard the save-state format. Bump the

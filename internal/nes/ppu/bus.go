@@ -1,6 +1,6 @@
 package ppu
 
-import "github.com/nkane/chippy/internal/nes"
+import "github.com/nkane/nessy/internal/nes"
 
 // PPU bus layout (14 address bits = 16 KiB):
 //
