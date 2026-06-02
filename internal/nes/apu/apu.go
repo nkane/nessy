@@ -711,10 +711,10 @@ func (a *APU) tickHalfFrame() {
 	a.noise.tickLength()
 }
 
-// emitSample pushes one int16 sample into the ring buffer using a
-// linear approximation of the nesdev DAC mixer. The output range
-// is [-16384, 16384] roughly — well within int16 headroom for
-// downstream mixing without clipping.
+// emitSample pushes one int16 sample into the ring buffer. The 2A03's
+// five channels are combined through the non-linear DAC mixer
+// (mixSample, see mixer.go) — separate pulse + tnd lookups per the
+// nesdev "APU Mixer" page, not a linear sum.
 func (a *APU) emitSample() {
 	if len(a.samples) >= a.samplesMax {
 		// Drop oldest. Host should drain often enough that this is
@@ -723,16 +723,9 @@ func (a *APU) emitSample() {
 		copy(a.samples, a.samples[1:])
 		a.samples = a.samples[:len(a.samples)-1]
 	}
-	// Linear approximation: out = pulse1 + pulse2 + triangle.
-	// Real silicon's mixer is non-linear (separate pulse_table +
-	// tnd_table); #249 swaps in the LUT once noise + DMC land.
-	// Triangle's amplitude (0-15) sits in the tnd group and on
-	// real silicon mixes at a different coefficient; the linear
-	// stand-in undercounts triangle slightly — fine for v0.3.
-	// Non-linear DAC mix per nesdev (#249). Output is a float in
-	// [0, ~1.0]; scale to int16 with headroom — peak combined
-	// signal lands around 0.5 + 0.5 = 1.0, so 30000 keeps a
-	// comfortable safety margin under int16 max.
+	// Non-linear DAC mix per nesdev. mixSample returns a float in
+	// [0, ~1.0]; peak combined signal lands near 1.0, so scaling by
+	// 30000 keeps comfortable headroom under int16 max.
 	mix := mixSample(
 		a.pulse1.output(),
 		a.pulse2.output(),
@@ -741,9 +734,16 @@ func (a *APU) emitSample() {
 		a.dmc.mixerOutput(),
 	)
 	sample := int16(mix * 30000)
-	// Sunsoft 5B expansion mix-in. The chip's Output() returns 0..45
-	// (3 channels × 0..15 per square level). Scale to a small int16
-	// addend so it sits alongside the 2A03 mix without clipping.
+	// Expansion-audio mix-ins. These chips live on the cartridge, not
+	// in the 2A03, so on real hardware they're summed with the console
+	// audio on the cart's analog out — i.e. outside the 2A03's
+	// non-linear DAC. We model that faithfully here: each chip's output
+	// is scaled to an int16 addend and summed onto the post-DAC sample
+	// rather than fed through mixSample. The per-chip scale constants
+	// are tuned so each sits at a plausible relative level without
+	// clipping; they are not silicon-exact balance figures.
+	//
+	// Sunsoft 5B: Output() returns 0..45 (3 channels × 0..15).
 	if a.sunsoft5b != nil {
 		sample += int16(a.sunsoft5b.Output() * 200)
 	}
