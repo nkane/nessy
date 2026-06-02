@@ -141,6 +141,134 @@ var accuracyROMs = []accuracyROM{
 		pathEnv:   "CHIPPY_ACCURACY_INSTR_TEST_V5_OFFICIAL_BIN",
 		maxFrames: 6000,
 	},
+	{
+		// Blargg oam_read — OAMADDR/OAMDATA ($2003/$2004) read
+		// behavior. Full PASS. Also the first NROM (mapper 0) ROM in
+		// the suite: these write their status to $6000 work RAM, which
+		// NROM now provides (8 KiB at $6000-$7FFF) — earlier NROM had
+		// no WRAM so every mapper-0 test ROM read as "never started".
+		name:      "oam_read.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/oam_read/oam_read.nes",
+		sha:       "f298973dabeb61ca35007445f7a615f77e87703c958c870986af83b1aabde926",
+		pathEnv:   "CHIPPY_ACCURACY_OAM_READ_BIN",
+		maxFrames: 2500,
+	},
+	{
+		// Blargg oam_stress — heavier OAM read/write timing patterns.
+		// oam_read PASSes, so basic access works; this diverges.
+		name:      "oam_stress.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/oam_stress/oam_stress.nes",
+		sha:       "95882d72a7acabe928fd277e3b3e0372f21ef3d41e36d7d8fb17fc017a356f70",
+		pathEnv:   "CHIPPY_ACCURACY_OAM_STRESS_BIN",
+		maxFrames: 2500,
+		knownFail: "status $01 — OAM read/write stress timing gap (#18)",
+	},
+	{
+		// Blargg ppu_open_bus — PPU open-bus latch decay timer.
+		name:      "ppu_open_bus.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/ppu_open_bus/ppu_open_bus.nes",
+		sha:       "d4208a3ff6340532dd0fced7f9d408d5b6585853a0ddc9c1f64ee1722ef08e67",
+		pathEnv:   "CHIPPY_ACCURACY_PPU_OPEN_BUS_BIN",
+		maxFrames: 2500,
+		knownFail: "status $03 — open-bus latch should decay to 0 within ~1s; decay timer not implemented (#17)",
+	},
+	// Blargg mmc3_test 1-6 — MMC3 scanline-IRQ counter + A12-edge
+	// clocking. All six fail today with distinct messages; common
+	// root is A12 rising-edge detection + reload edge cases. Tracked
+	// together in #16. Wired individually for granular close-out.
+	{
+		name:      "mmc3_test_1_clocking.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/1-clocking.nes",
+		sha:       "57c77c66edde8c45e17bda02691dd3c7fd0b270c1ec024dff4e11a7778dfaa37",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_1_BIN",
+		maxFrames: 2500,
+		knownFail: "status $03 — counter should decrement when A12 toggled via PPUADDR (#16)",
+	},
+	{
+		name:      "mmc3_test_2_details.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/2-details.nes",
+		sha:       "89e1f16514aafeee90b5ab849dd73dbf1456dbd363ec2e3b798461125a33068a",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_2_BIN",
+		maxFrames: 2500,
+		knownFail: "status $02 — counter isn't working when reloaded with 255 (#16)",
+	},
+	{
+		name:      "mmc3_test_3_a12_clocking.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/3-A12_clocking.nes",
+		sha:       "dc6779b3d64e27b8d3b2b6dee7a1b528b9b6401ac0e6a9a1d5ab928dcd8ad6bb",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_3_BIN",
+		maxFrames: 2500,
+		knownFail: "status $04 — counter should clock when A12 changes to 1 via PPUADDR write (#16)",
+	},
+	{
+		name:      "mmc3_test_4_scanline_timing.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/4-scanline_timing.nes",
+		sha:       "0474550dbf811bf1acda2178bf355edd5c100088479a09d881f84994c1690b82",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_4_BIN",
+		maxFrames: 2500,
+		knownFail: "status $03 — scanline 0 IRQ should occur sooner when $2000=$08 (#16)",
+	},
+	{
+		name:      "mmc3_test_5_mmc3.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/5-MMC3.nes",
+		sha:       "f714089b5d056a50d63854a8d13359914d20d6144d8b25e48f880116ae73d8fd",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_5_BIN",
+		maxFrames: 2500,
+		knownFail: "status $02 — should reload + set IRQ every clock when reload is 0 (#16)",
+	},
+	{
+		name:      "mmc3_test_6_mmc6.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/6-MMC6.nes",
+		sha:       "e6bdbadf46cc4bf7b26e496ecab44e60a8b1279c1b9cf16df090c9832adf6943",
+		pathEnv:   "CHIPPY_ACCURACY_MMC3_6_BIN",
+		maxFrames: 2500,
+		knownFail: "status $02 — IRQ should be set when reloading to 0 after clear (#16)",
+	},
+	{
+		// Blargg sprite_overflow_tests (1.Basics representative). The
+		// whole suite hangs at init — never writes $6000 status even
+		// at 9000 frames. #12 expected these to PASS (chippy#283).
+		// Low frame cap: it never reports, so don't burn CI time.
+		name:      "sprite_overflow_basics.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_overflow_tests/1.Basics.nes",
+		sha:       "1a6782f63ccb3a3dd1aa6a24272036c9c3aa232c2d1ff0b21e872741a3ee4fe2",
+		pathEnv:   "CHIPPY_ACCURACY_SPRITE_OVERFLOW_BIN",
+		maxFrames: 600,
+		knownFail: "init hang — never writes $6000 status (9000-frame timeout); test shell never starts (#19)",
+	},
+	{
+		// Blargg dmc_dma_during_read4 (dma_2007_read representative).
+		// Hangs at init like sprite_overflow — no $6000 status at 9000
+		// frames. Low frame cap.
+		name:      "dmc_dma_2007_read.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/dmc_dma_during_read4/dma_2007_read.nes",
+		sha:       "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2",
+		pathEnv:   "CHIPPY_ACCURACY_DMC_DMA_BIN",
+		maxFrames: 600,
+		knownFail: "init hang — never writes $6000 status (9000-frame timeout) (#20)",
+	},
+	{
+		// Blargg sprite_hit_tests 2005 (01.basics representative).
+		// Visual-only ROM, predates the $6000 text-shell — reports
+		// PASS only on screen, so runBlargg can't read a status.
+		// Needs a framebuffer-based harness (#21). Low frame cap.
+		name:      "sprite_hit_basics.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/01.basics.nes",
+		sha:       "51819e8e502bd88fe3b7244198a074dbeef2e848f66c587be04b04f1f0d4bb52",
+		pathEnv:   "CHIPPY_ACCURACY_SPRITE_HIT_BIN",
+		maxFrames: 600,
+		knownFail: "visual-only ROM (2005 suite, pre-$6000-shell) — result shown on screen only; needs framebuffer harness (#21)",
+	},
+	{
+		// cpu_timing_test6 — visual-only, no $6000 protocol. Needs the
+		// framebuffer harness (#21).
+		name:      "cpu_timing_test6.nes",
+		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/cpu_timing_test6/cpu_timing_test.nes",
+		sha:       "6ab4fe8af23b12ca0dfccfc030de3d4069bf2498e3ef20ddcf1ca75555065b85",
+		pathEnv:   "CHIPPY_ACCURACY_CPU_TIMING6_BIN",
+		maxFrames: 600,
+		knownFail: "visual-only ROM — no $6000 protocol; needs framebuffer harness (#21)",
+	},
 }
 
 func TestAccuracy(t *testing.T) {
