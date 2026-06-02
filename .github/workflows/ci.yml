@@ -1,0 +1,194 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Linux dev-libs Ebiten needs for the CGO `-tags=nessy` build (mirrors
+# the README install step). Only the tagged build + wasm jobs need GL/X11.
+env:
+  EBITEN_APT: >-
+    libgl1-mesa-dev xorg-dev libasound2-dev libxcursor-dev
+    libxinerama-dev libxi-dev libxrandr-dev
+
+jobs:
+  # Default-tag suite — pure Go (game.go is behind `-tags=nessy`, so the
+  # default build pulls in main_stub.go and no Ebiten/CGO). Runs on all
+  # three OSes without dev-libs.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        shell: bash
+        run: go test -race -count=1 ./...
+
+  # Tagged build — the real `nessy` game binary (Ebiten + CGO + GL/X11).
+  # Build-only: the windowed app can't run headless on CI, but compiling
+  # it catches build-tag + CGO breakage the default suite can't see.
+  build-tagged:
+    name: build -tags=nessy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Install Ebiten dev-libs (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $EBITEN_APT
+
+      - name: go build -tags=nessy
+        run: go build -tags=nessy ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  # nesdev / Blargg accuracy ROM suite. ROMs download + SHA-pin + cache
+  # on first run (see cmd/nessy/accuracy_test.go). Tracks #4 / #1.
+  accuracy:
+    name: accuracy ROM suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Run accuracy suite
+        run: go test -tags=accuracy -timeout 5m -run TestAccuracy -v ./cmd/nessy/...
+
+  # Headless recorder smoke (#339). nessy-record synthesizes a
+  # deterministic GIF from the emulator — no window, no GL. The test
+  # asserts the GIF magic + determinism; this job runs an input-driven
+  # render end-to-end as a crash check.
+  smoke:
+    name: recorder smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Render input-echo smoke GIF
+        run: |
+          go run ./cmd/nessy-record \
+            -rom roms/demos/input-echo/input-echo.nes \
+            -script test/smoke/nessy-input-echo.json \
+            -frames 120 -o /tmp/nessy-smoke.gif
+          test -s /tmp/nessy-smoke.gif
+          head -c6 /tmp/nessy-smoke.gif | grep -q GIF89a
+
+      - name: Upload smoke GIF
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nessy-recorder-smoke
+          path: /tmp/nessy-smoke.gif
+          if-no-files-found: error
+
+  wasm:
+    name: wasm build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Build nessy.wasm
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go build -o /tmp/nessy.wasm ./cmd/nessy-wasm
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  # Perf regression gate — slot wired, test pending #11. nessy needs its
+  # own benchmark (PPU.Run / DMC fetch hot paths); chippy's perfgate lived
+  # in cpu/, now the library dep. Until #11 lands a perfgate-tagged
+  # TestPerfGate, this runs vacuously green.
+  perfgate:
+    name: perf baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Run perf gate (#11)
+        run: go test -tags=perfgate -timeout 5m -run TestPerfGate ./...
