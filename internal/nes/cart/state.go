@@ -67,8 +67,10 @@ type VRC6State struct {
 	CHRRAM            []byte
 }
 
-// NROMState — only CHR-RAM (when present) is mutable.
+// NROMState — work RAM ($6000-$7FFF) + CHR-RAM (when present) are the
+// mutable regions.
 type NROMState struct {
+	WRAM   []byte
 	CHRRAM []byte // nil if CHR-ROM
 }
 
@@ -247,6 +249,7 @@ func LoadCart(c Cartridge, s CartState) error {
 
 func (c *NROM) saveState() *NROMState {
 	s := &NROMState{}
+	s.WRAM = append(s.WRAM, c.wram...)
 	if c.chrIsRAM {
 		s.CHRRAM = append(s.CHRRAM, c.chr...)
 	}
@@ -254,6 +257,10 @@ func (c *NROM) saveState() *NROMState {
 }
 
 func (c *NROM) loadState(s NROMState) error {
+	if len(s.WRAM) != len(c.wram) {
+		return fmt.Errorf("nrom: WRAM length mismatch (have %d, got %d)", len(c.wram), len(s.WRAM))
+	}
+	copy(c.wram, s.WRAM)
 	if c.chrIsRAM {
 		if len(s.CHRRAM) != len(c.chr) {
 			return fmt.Errorf("nrom: CHR-RAM length mismatch (have %d, got %d)", len(c.chr), len(s.CHRRAM))
