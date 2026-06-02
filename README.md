@@ -178,6 +178,12 @@ chippy -dap-attach tcp:localhost:14785      # or your editor's DAP client
 VS Code / nvim-dap onboarding lives in
 [chippy's docs/dap.md](https://github.com/nkane/chippy/blob/main/docs/dap.md).
 
+## Support
+
+If nessy is useful to you, consider buying me a coffee:
+
+<a href="https://buymeacoffee.com/nkane" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60" width="217"></a>
+
 ## License
 
 MIT. See `LICENSE`.
