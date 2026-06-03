@@ -224,6 +224,18 @@ func (c *MMC3) PPUWrite(addr uint16, v byte) {
 	c.chr[c.chrOffset(addr)] = v
 }
 
+// NotifyVRAMAddr clocks the A12 IRQ counter when the PPU drives a new
+// VRAM address onto the bus without a CHR fetch — the $2006 second
+// write and the non-rendering $2007 auto-increment. Real silicon sees
+// A12 follow the PPU address bus regardless of whether a pattern fetch
+// is in flight; Blargg mmc3_test 1 (clocking) + 3 (A12_clocking)
+// toggle A12 purely through PPUADDR and require the counter to clock.
+// Shares the same prevA12 edge state as the CHR-fetch path so the two
+// can't double-count a single rising edge. The ppu package calls this
+// via its optional vramAddrHook interface (Mesen2
+// NesPpu::NotifyVramAddressChange).
+func (c *MMC3) NotifyVRAMAddr(addr uint16) { c.clockA12(addr) }
+
 // chrOffset computes the byte offset into c.chr for a PPU address
 // in $0000-$1FFF based on the active CHR bank mode + bank
 // registers.

@@ -46,6 +46,18 @@ type Cart interface {
 	Mirroring() nes.Mirroring
 }
 
+// vramAddrHook is the optional cart surface for A12-edge clocking
+// (MMC3). The PPU notifies it whenever the VRAM address register is
+// driven onto the bus OUTSIDE a CHR fetch — i.e. the $2006 second
+// write and the $2007 auto-increment while rendering is off. CHR
+// fetches already reach the cart through PPURead/PPUWrite, so the
+// MMC3 IRQ counter clocks off those directly; this hook closes the
+// "A12 toggled via PPUADDR" gap (Blargg mmc3_test 1 + 3). Mirrors
+// Mesen2 NesPpu::SetBusAddress → NotifyVramAddressChange.
+type vramAddrHook interface {
+	NotifyVRAMAddr(addr uint16)
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -61,8 +73,9 @@ type NMI interface {
 // 8-byte register window at $2000-$2007 is mirrored every 8 bytes up
 // to $3FFF.
 type PPU struct {
-	cart Cart
-	nmi  NMI
+	cart     Cart
+	vramHook vramAddrHook // non-nil iff cart implements NotifyVRAMAddr (MMC3)
+	nmi      NMI
 
 	// Latched registers ($2000-$2007).
 	ctrl    byte // $2000 PPUCTRL
@@ -222,6 +235,9 @@ type scrollSnapshot struct {
 // nil for register-level tests that don't exercise rendering or NMI.
 func New(cart Cart, nmi NMI) *PPU {
 	p := &PPU{cart: cart, nmi: nmi, timing: nes.NTSC}
+	if h, ok := cart.(vramAddrHook); ok {
+		p.vramHook = h
+	}
 	p.Reset()
 	return p
 }
@@ -425,6 +441,17 @@ func (p *PPU) Write(addr uint16, v byte) {
 			// reset scroll for its status-bar split.
 			p.scrollFromV()
 			p.recordScrollChange()
+			// The new address is driven onto the PPU bus, so A12 can
+			// rise here without any CHR fetch — this is the path MMC3
+			// games + Blargg mmc3_test use to clock the IRQ counter via
+			// PPUADDR. Mesen2 only puts v on the bus here when rendering
+			// is off (UpdateState's $2006-delay branch gates on
+			// "!IsRenderingEnabled()"); during rendering the fetch
+			// pipeline owns A12, so a $2006 write must NOT inject an
+			// extra edge.
+			if !p.renderingEnabled() {
+				p.notifyVRAMAddr()
+			}
 		}
 	case 0x2007:
 		p.busWrite(p.v&0x3FFF, v)
@@ -668,6 +695,22 @@ func (p *PPU) incVRAMAddr() {
 		p.v++
 	}
 	p.v &= 0x3FFF
+	// The post-increment address is driven onto the bus (Mesen2
+	// UpdateVideoRamAddr → SetBusAddress), clocking MMC3's A12 edge.
+	// Only when rendering is off: during active rendering $2007's
+	// increment is subsumed by the fetch pipeline's own A12 toggles,
+	// which already reach the cart through PPURead/PPUWrite.
+	if !p.renderingEnabled() {
+		p.notifyVRAMAddr()
+	}
+}
+
+// notifyVRAMAddr drives the current VRAM address onto the PPU bus for
+// carts that watch A12 (MMC3). No-op for every other mapper.
+func (p *PPU) notifyVRAMAddr() {
+	if p.vramHook != nil {
+		p.vramHook.NotifyVRAMAddr(p.v & 0x3FFF)
+	}
 }
 
 // Tick advances the PPU by 3 * cpuCycles dots — the 2C02 / 2A03 share a

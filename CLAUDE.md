@@ -136,6 +136,18 @@ straddle the two:
   bytes pending (Mesen `StartDmcTransfer` condition). Inits with
   `bufferEmpty=true, silenced=true`.
 
+- **MMC3 A12 clocks on PPUADDR, not just CHR fetches** (#16). The PPU
+  drives the VRAM address onto the bus — and clocks `MMC3.clockA12` via
+  the optional `vramAddrHook` (`NotifyVRAMAddr`) — on the $2006 second
+  write AND the non-rendering $2007 auto-increment, both gated on
+  `!renderingEnabled()` (during rendering the fetch pipeline owns A12).
+  Mirrors Mesen `NesPpu::SetBusAddress` → `NotifyVramAddressChange`.
+  CHR fetches still clock through `PPURead`/`PPUWrite`; both share
+  MMC3's `prevA12` edge state so a single rise can't double-count.
+  Closes mmc3_test 1/2/3/5. The remaining 4/6 sub-tests need the
+  3-PPU-cycle deferred $2006 v-update Mesen models in `UpdateState`
+  (#25) — NOT yet implemented (nessy applies `v` immediately).
+
 ## Accuracy harness
 
 Live tracker: [#1](https://github.com/nkane/nessy/issues/1). Wire ROMs
@@ -151,6 +163,8 @@ job downloads + runs.
 | instr_misc.nes | 4/4 PASS | abs_x_wrap, branch_wrap, dummy_reads, dummy_reads_apu |
 | instr_test-v5_official.nes | 16/16 PASS | every official opcode × every addressing mode |
 | instr_test-v5.nes (all_instrs) | SKIP | test 3 fails at $AB LXA/ATX — unstable illegal, analog-noise dependent |
+| mmc3_test 1/2/3/5 | PASS | clocking, details, A12_clocking, MMC3 — A12 clocked via PPUADDR ($2006) + non-rendering $2007 |
+| mmc3_test 4/6 | SKIP | scanline_timing #3 + MMC6 #3 — need deferred $2006 v-update (3 PPU cyc) + sub-cycle render A12 timing (#25) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
