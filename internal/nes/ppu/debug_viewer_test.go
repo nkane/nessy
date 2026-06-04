@@ -2,6 +2,46 @@ package ppu_test
 
 import "testing"
 
+// DebugSpriteViewer decodes OAM into per-sprite fields. Write a sprite
+// via $2003/$2004, flip PPUCTRL to 8x16, and verify the decode +
+// register context.
+func TestDebugSpriteViewer_Decode(t *testing.T) {
+	p, _, _ := newMMC3PPU(t)
+	p.Write(0x2000, 0x20) // PPUCTRL bit 5 → 8x16 sprites
+
+	// Sprite 0: Y=$20, tile=$05, attr=$E3 (palette 3, behind, H+V flip), X=$40.
+	p.Write(0x2003, 0x00) // OAMADDR = 0
+	for _, b := range []byte{0x20, 0x05, 0xE3, 0x40} {
+		p.Write(0x2004, b)
+	}
+	// Sprite 1: parked off-screen (Y=$F0 >= $EF).
+	p.Write(0x2003, 0x04)
+	for _, b := range []byte{0xF0, 0x00, 0x00, 0x00} {
+		p.Write(0x2004, b)
+	}
+
+	v := p.DebugSpriteViewer()
+	if !v.Sprite8x16 {
+		t.Error("Sprite8x16 = false; want true (PPUCTRL bit 5 set)")
+	}
+	if len(v.Sprites) != 64 || len(v.OAM) != 256 {
+		t.Fatalf("shape: sprites=%d oam=%d; want 64/256", len(v.Sprites), len(v.OAM))
+	}
+	s0 := v.Sprites[0]
+	if s0.Y != 0x20 || s0.Tile != 0x05 || s0.Attr != 0xE3 || s0.X != 0x40 {
+		t.Errorf("sprite0 raw = Y$%02X tile$%02X attr$%02X X$%02X; want $20/$05/$E3/$40", s0.Y, s0.Tile, s0.Attr, s0.X)
+	}
+	if s0.Palette != 3 || !s0.Priority || !s0.FlipH || !s0.FlipV {
+		t.Errorf("sprite0 decode = pal%d pri%v H%v V%v; want 3/true/true/true", s0.Palette, s0.Priority, s0.FlipH, s0.FlipV)
+	}
+	if !s0.OnScreen {
+		t.Error("sprite0 OnScreen = false; want true (Y=$20)")
+	}
+	if v.Sprites[1].OnScreen {
+		t.Error("sprite1 OnScreen = true; want false (Y=$F0)")
+	}
+}
+
 // DebugPPUViewer must be side-effect-free: dumping the pattern tables
 // on an MMC3 cart must NOT clock the A12 IRQ counter (it reads through
 // PeekCHR, not PPURead). A spurious IRQ here would corrupt a game's

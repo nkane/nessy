@@ -93,6 +93,14 @@ stays light:
   on mappers whose `PPURead` has side effects (MMC3's A12 IRQ clock),
   so opening the viewer can't perturb a game's scanline-IRQ timing.
 
+### Sprite / OAM viewer ([#30](https://github.com/nkane/nessy/issues/30))
+
+- Command: `nessy/spriteViewer`.
+- Response is a `SpriteViewer`: the raw 256-byte OAM, the `$2003`
+  cursor, the 8x16 flag + 8x8 sprite pattern-table base, and all 64
+  sprites decoded — X/Y, tile, palette, priority, H/V flip, and an
+  on-screen flag (Y < `$EF`). OAM order is priority order.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)

@@ -1022,6 +1022,76 @@ type PPUViewer struct {
 	Mirroring string `json:"mirroring"`
 }
 
+// SpriteEntry is one decoded OAM sprite for the sprite viewer (#30).
+type SpriteEntry struct {
+	Index    int  `json:"index"`    // 0-63 (OAM order = priority order)
+	X        byte `json:"x"`        // OAM byte 3 (screen X)
+	Y        byte `json:"y"`        // OAM byte 0 (screen Y = y+1)
+	Tile     byte `json:"tile"`     // OAM byte 1 (raw tile index)
+	Attr     byte `json:"attr"`     // OAM byte 2 (raw attribute byte)
+	Palette  byte `json:"palette"`  // attr bits 0-1 (sprite palette 0-3)
+	Priority bool `json:"priority"` // attr bit 5: true = behind background
+	FlipH    bool `json:"flipH"`    // attr bit 6
+	FlipV    bool `json:"flipV"`    // attr bit 7
+	OnScreen bool `json:"onScreen"` // Y in the visible range (< $EF)
+}
+
+// SpriteViewer is the OAM + decoded-sprite state for the sprite viewer
+// panel (#30). OAM is small (256 B) so this is cheap; served on its own
+// `nessy/spriteViewer` request to keep the routine status poll lean.
+type SpriteViewer struct {
+	OAM          []byte        `json:"oam"`          // raw 256-byte OAM
+	OAMAddr      byte          `json:"oamAddr"`      // $2003 cursor
+	Sprite8x16   bool          `json:"sprite8x16"`   // PPUCTRL bit 5
+	PatternTable uint16        `json:"patternTable"` // 8x8 sprite pattern base ($0000/$1000); ignored in 8x16
+	Sprites      []SpriteEntry `json:"sprites"`      // 64 decoded entries, OAM order
+}
+
+// DebugSpriteViewer decodes the 64 OAM sprites for the debugger.
+// Side-effect-free.
+func (p *PPU) DebugSpriteViewer() SpriteViewer {
+	oam := make([]byte, len(p.oam))
+	copy(oam, p.oam[:])
+
+	sprite8x16 := p.ctrl&0x20 != 0
+	patternBase := uint16(0)
+	// PPUCTRL bit 3 selects the 8x8 sprite pattern table; in 8x16 mode
+	// the table comes from each tile's bit 0 instead, so the panel
+	// derives it per-sprite.
+	if p.ctrl&0x08 != 0 && !sprite8x16 {
+		patternBase = 0x1000
+	}
+
+	sprites := make([]SpriteEntry, 64)
+	for i := range sprites {
+		y := p.oam[i*4+0]
+		tile := p.oam[i*4+1]
+		attr := p.oam[i*4+2]
+		x := p.oam[i*4+3]
+		sprites[i] = SpriteEntry{
+			Index:    i,
+			X:        x,
+			Y:        y,
+			Tile:     tile,
+			Attr:     attr,
+			Palette:  attr & 0x03,
+			Priority: attr&0x20 != 0,
+			FlipH:    attr&0x40 != 0,
+			FlipV:    attr&0x80 != 0,
+			// A sprite with Y >= $EF (239) sits below the last visible
+			// scanline — the standard "park it off-screen" idiom.
+			OnScreen: y < 0xEF,
+		}
+	}
+	return SpriteViewer{
+		OAM:          oam,
+		OAMAddr:      p.oamAddr,
+		Sprite8x16:   sprite8x16,
+		PatternTable: patternBase,
+		Sprites:      sprites,
+	}
+}
+
 // debugCHR reads a CHR byte with no side effects (no A12 clock).
 func (p *PPU) debugCHR(addr uint16) byte {
 	switch {
