@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/nkane/nessy/internal/nes"
+	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
 func newTestBus(t *testing.T) *nesBus {
@@ -81,6 +82,23 @@ func TestDebugRequestHandler(t *testing.T) {
 	}
 	if snap.Version != debugSnapshotVersion {
 		t.Errorf("body Version = %d; want %d", snap.Version, debugSnapshotVersion)
+	}
+
+	// ppuViewer command → handled with a PPUViewer body.
+	pv, handled, err := h(ppuViewerCommand, nil)
+	if err != nil {
+		t.Fatalf("%s: err = %v", ppuViewerCommand, err)
+	}
+	if !handled {
+		t.Fatalf("%s: handled = false; want true", ppuViewerCommand)
+	}
+	view, ok := pv.(ppu.PPUViewer)
+	if !ok {
+		t.Fatalf("%s: body type = %T; want ppu.PPUViewer", ppuViewerCommand, pv)
+	}
+	if len(view.PatternTables) != 0x2000 || len(view.NameTables) != 4 || len(view.Palette) != 32 {
+		t.Errorf("PPUViewer shape: pattern=%d nametables=%d palette=%d; want 8192/4/32",
+			len(view.PatternTables), len(view.NameTables), len(view.Palette))
 	}
 
 	_, handled, err = h("some/unknown", nil)

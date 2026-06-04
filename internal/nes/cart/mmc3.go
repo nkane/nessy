@@ -224,6 +224,18 @@ func (c *MMC3) PPUWrite(addr uint16, v byte) {
 	c.chr[c.chrOffset(addr)] = v
 }
 
+// PeekCHR reads a CHR byte WITHOUT clocking the A12 IRQ counter — the
+// side-effect-free path the debugger's PPU viewer uses to dump the
+// pattern tables (#29). MMC3 is the only mapper whose PPURead has a
+// side effect (the A12 edge), so it's the only one that needs this;
+// the PPU falls back to plain PPURead for every other (pure) mapper.
+func (c *MMC3) PeekCHR(addr uint16) byte {
+	if addr >= 0x2000 {
+		return 0
+	}
+	return c.chr[c.chrOffset(addr)]
+}
+
 // NotifyVRAMAddr clocks the A12 IRQ counter when the PPU drives a new
 // VRAM address onto the bus without a CHR fetch — the $2006 second
 // write and the non-rendering $2007 auto-increment. Real silicon sees

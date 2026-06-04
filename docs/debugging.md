@@ -78,6 +78,21 @@ own section (full OAM, nametable bytes, per-dot event log, access
 heatmaps), so a routine poll stays cheap until a panel needs the heavy
 data.
 
+### PPU viewer ([#29](https://github.com/nkane/nessy/issues/29))
+
+The tilemap / pattern / palette panels pull their (heavier ~12 KiB)
+render state on demand via a second request so the routine status poll
+stays light:
+
+- Command: `nessy/ppuViewer`.
+- Response is a `PPUViewer`: the 8 KiB pattern window ($0000-$1FFF) as
+  currently banked, the four 1 KiB nametables after mirroring
+  resolution, the 32-byte palette, the decoded scroll cursor
+  (coarse/fine X+Y + nametable select), and the active mirroring mode.
+- **Side-effect-free:** pattern reads go through the cart's `PeekCHR`
+  on mappers whose `PPURead` has side effects (MMC3's A12 IRQ clock),
+  so opening the viewer can't perturb a game's scanline-IRQ timing.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)

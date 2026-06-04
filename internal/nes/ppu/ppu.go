@@ -58,6 +58,15 @@ type vramAddrHook interface {
 	NotifyVRAMAddr(addr uint16)
 }
 
+// chrPeeker is the optional cart surface for a side-effect-free CHR
+// read. MMC3's PPURead clocks the A12 IRQ counter, so the debugger's
+// PPU viewer (#29) must not use it to dump pattern tables — it reads
+// through PeekCHR instead. Mappers with a pure PPURead don't implement
+// this; the PPU falls back to PPURead for them.
+type chrPeeker interface {
+	PeekCHR(addr uint16) byte
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -75,6 +84,7 @@ type NMI interface {
 type PPU struct {
 	cart     Cart
 	vramHook vramAddrHook // non-nil iff cart implements NotifyVRAMAddr (MMC3)
+	chrPeek  chrPeeker    // non-nil iff cart implements PeekCHR (MMC3)
 	nmi      NMI
 
 	// Latched registers ($2000-$2007).
@@ -237,6 +247,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	p := &PPU{cart: cart, nmi: nmi, timing: nes.NTSC}
 	if h, ok := cart.(vramAddrHook); ok {
 		p.vramHook = h
+	}
+	if pk, ok := cart.(chrPeeker); ok {
+		p.chrPeek = pk
 	}
 	p.Reset()
 	return p
@@ -970,6 +983,94 @@ func (p *PPU) DebugRegs() DebugRegs {
 		W:       p.w,
 		ReadBuf: p.readBuf,
 		OpenBus: p.openBus,
+	}
+}
+
+// DebugScroll is the decoded scroll cursor for the PPU viewer (#29):
+// the coarse/fine X+Y and nametable-select packed in the `v` register
+// plus the fine-X latch `x`. This is the rectangle the tilemap panel
+// overlays on the 2x2 nametable render.
+type DebugScroll struct {
+	CoarseX   byte `json:"coarseX"`   // v bits 0-4
+	CoarseY   byte `json:"coarseY"`   // v bits 5-9
+	NameTable byte `json:"nameTable"` // v bits 10-11 (which of the 4 banks)
+	FineY     byte `json:"fineY"`     // v bits 12-14
+	FineX     byte `json:"fineX"`     // x latch (0-7)
+}
+
+// PPUViewer is the heavyweight PPU-render state the tilemap / pattern /
+// palette panels need (#29). Kept off the routine DebugSnapshot poll
+// (foundation #28) and served on demand so a 60 Hz status poll stays
+// allocation-light. Every read here is side-effect-free — pattern
+// reads go through PeekCHR on mappers whose PPURead has side effects
+// (MMC3's A12 clock), so opening the viewer can't perturb IRQ timing.
+type PPUViewer struct {
+	// PatternTables is the 8 KiB CHR window ($0000-$1FFF) as currently
+	// banked: $0000-$0FFF = table 0, $1000-$1FFF = table 1.
+	PatternTables []byte `json:"patternTables"`
+	// NameTables holds the four 1 KiB logical nametables ($2000/$2400/
+	// $2800/$2C00) AFTER mirroring resolution — each is 0x3C0 tile bytes
+	// + 0x40 attribute bytes. With 2 KiB physical VRAM two of the four
+	// alias, exactly as the PPU sees them.
+	NameTables [][]byte `json:"nameTables"`
+	// Palette is the 32-byte palette RAM (16 background + 16 sprite,
+	// with the $3F10/$14/$18/$1C universal-background mirrors applied).
+	Palette []byte      `json:"palette"`
+	Scroll  DebugScroll `json:"scroll"`
+	// Mirroring is the active nametable mirroring mode (string form) so
+	// the panel can label the layout.
+	Mirroring string `json:"mirroring"`
+}
+
+// debugCHR reads a CHR byte with no side effects (no A12 clock).
+func (p *PPU) debugCHR(addr uint16) byte {
+	switch {
+	case p.chrPeek != nil:
+		return p.chrPeek.PeekCHR(addr)
+	case p.cart != nil:
+		// Every mapper without a chrPeeker has a pure PPURead.
+		return p.cart.PPURead(addr)
+	default:
+		return 0
+	}
+}
+
+// DebugPPUViewer captures the full PPU-render state for the debugger's
+// tilemap / pattern / palette panels (#29). Side-effect-free.
+func (p *PPU) DebugPPUViewer() PPUViewer {
+	pat := make([]byte, 0x2000)
+	for a := range pat {
+		pat[a] = p.debugCHR(uint16(a))
+	}
+	nts := make([][]byte, 4)
+	for bank := range nts {
+		nt := make([]byte, 0x400)
+		base := uint16(0x2000 + bank*0x400)
+		for off := range nt {
+			// nametableIndex resolves the cart's mirroring; reads the
+			// internal 2 KiB VRAM directly (no bus side effects).
+			nt[off] = p.vram[p.nametableIndex(base+uint16(off))]
+		}
+		nts[bank] = nt
+	}
+	pal := make([]byte, len(p.palette))
+	copy(pal, p.palette[:])
+	mir := "unknown"
+	if p.cart != nil {
+		mir = p.cart.Mirroring().String()
+	}
+	return PPUViewer{
+		PatternTables: pat,
+		NameTables:    nts,
+		Palette:       pal,
+		Scroll: DebugScroll{
+			CoarseX:   byte(p.v & 0x1F),
+			CoarseY:   byte((p.v >> 5) & 0x1F),
+			NameTable: byte((p.v >> 10) & 0x03),
+			FineY:     byte((p.v >> 12) & 0x07),
+			FineX:     p.x,
+		},
+		Mirroring: mir,
 	}
 }
 
