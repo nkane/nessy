@@ -64,6 +64,59 @@ func TestA12_MMC3ScanlineIRQFiresWithoutSprites(t *testing.T) {
 	}
 }
 
+// With rendering OFF, the MMC3 IRQ counter still clocks when the CPU
+// toggles A12 through PPUADDR ($2006) — the PPU drives v onto the bus
+// on the second $2006 write (Mesen2 UpdateState's deferred $2006
+// branch). Each low→high A12 transition decrements the counter; with
+// latch=1 the very first rise after a reload underflows and fires.
+// This is the path Blargg mmc3_test 1 + 3 exercise (#16).
+func TestA12_MMC3ClocksViaPPUADDR(t *testing.T) {
+	p, c, sink := newMMC3PPU(t)
+	c.CPUWrite(0xC000, 1) // latch = 1: fire on the first edge after reload
+	c.CPUWrite(0xC001, 0) // arm reload on next rising edge
+	c.CPUWrite(0xE001, 0) // enable IRQ
+	// mask stays 0 → rendering off, so no fetch-driven A12 edges; the
+	// only edges come from our PPUADDR writes.
+
+	// Helper: point the VRAM address (via $2006 hi/lo) so A12 = the
+	// given level. $1000 sets A12 high; $0000 sets it low.
+	setA12 := func(high bool) {
+		hi := byte(0x00)
+		if high {
+			hi = 0x10 // $1xxx → bit 12 set
+		}
+		p.Write(0x2006, hi)
+		p.Write(0x2006, 0x00)
+	}
+
+	// First rise: counter==0 → reload to 1. Second rise (after a fall):
+	// 1 → 0 → IRQ. Drive several low/high cycles.
+	for range 4 {
+		setA12(false)
+		setA12(true)
+	}
+	if sink.asserts == 0 {
+		t.Fatal("MMC3 IRQ never fired from PPUADDR-driven A12 toggles; want >= 1")
+	}
+}
+
+// A $2006 write that does NOT change A12 (stays low) must not clock the
+// counter — only genuine low→high transitions count.
+func TestA12_MMC3NoClockWithoutRise(t *testing.T) {
+	p, c, sink := newMMC3PPU(t)
+	c.CPUWrite(0xC000, 1)
+	c.CPUWrite(0xC001, 0)
+	c.CPUWrite(0xE001, 0)
+	for i := range 8 {
+		// Always low ($0xxx): A12 never rises.
+		p.Write(0x2006, 0x00)
+		p.Write(0x2006, byte(i))
+	}
+	if sink.asserts != 0 {
+		t.Errorf("MMC3 IRQ fired %d times with A12 held low; want 0", sink.asserts)
+	}
+}
+
 // Rendering disabled → no fetches → no A12 edges → no IRQ.
 func TestA12_NoIRQWhenRenderingOff(t *testing.T) {
 	p, c, sink := newMMC3PPU(t)

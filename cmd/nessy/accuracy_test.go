@@ -173,16 +173,18 @@ var accuracyROMs = []accuracyROM{
 		knownFail: "status $03 — open-bus latch should decay to 0 within ~1s; decay timer not implemented (#17)",
 	},
 	// Blargg mmc3_test 1-6 — MMC3 scanline-IRQ counter + A12-edge
-	// clocking. All six fail today with distinct messages; common
-	// root is A12 rising-edge detection + reload edge cases. Tracked
-	// together in #16. Wired individually for granular close-out.
+	// clocking. Tests 1, 2, 3, 5 PASS since the PPU drives the VRAM
+	// address onto the bus on $2006 writes + non-rendering $2007
+	// increments (NotifyVRAMAddr → MMC3.clockA12), closing the
+	// "A12 toggled via PPUADDR" gap (#16). Tests 4 + 6 reach their
+	// next sub-test, both gated on the 3-PPU-cycle deferred $2006
+	// v-update + sub-cycle rendering A12 timing (tracked in #25).
 	{
 		name:      "mmc3_test_1_clocking.nes",
 		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/mmc3_test/1-clocking.nes",
 		sha:       "57c77c66edde8c45e17bda02691dd3c7fd0b270c1ec024dff4e11a7778dfaa37",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_1_BIN",
 		maxFrames: 2500,
-		knownFail: "status $03 — counter should decrement when A12 toggled via PPUADDR (#16)",
 	},
 	{
 		name:      "mmc3_test_2_details.nes",
@@ -190,7 +192,6 @@ var accuracyROMs = []accuracyROM{
 		sha:       "89e1f16514aafeee90b5ab849dd73dbf1456dbd363ec2e3b798461125a33068a",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_2_BIN",
 		maxFrames: 2500,
-		knownFail: "status $02 — counter isn't working when reloaded with 255 (#16)",
 	},
 	{
 		name:      "mmc3_test_3_a12_clocking.nes",
@@ -198,7 +199,6 @@ var accuracyROMs = []accuracyROM{
 		sha:       "dc6779b3d64e27b8d3b2b6dee7a1b528b9b6401ac0e6a9a1d5ab928dcd8ad6bb",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_3_BIN",
 		maxFrames: 2500,
-		knownFail: "status $04 — counter should clock when A12 changes to 1 via PPUADDR write (#16)",
 	},
 	{
 		name:      "mmc3_test_4_scanline_timing.nes",
@@ -206,7 +206,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "0474550dbf811bf1acda2178bf355edd5c100088479a09d881f84994c1690b82",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_4_BIN",
 		maxFrames: 2500,
-		knownFail: "status $03 — scanline 0 IRQ should occur sooner when $2000=$08 (#16)",
+		knownFail: "status $03 (Failed #3) — scanline 0 IRQ should occur sooner when $2000=$08; needs sub-cycle rendering A12 timing + deferred $2006 v-update (#25)",
 	},
 	{
 		name:      "mmc3_test_5_mmc3.nes",
@@ -214,7 +214,6 @@ var accuracyROMs = []accuracyROM{
 		sha:       "f714089b5d056a50d63854a8d13359914d20d6144d8b25e48f880116ae73d8fd",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_5_BIN",
 		maxFrames: 2500,
-		knownFail: "status $02 — should reload + set IRQ every clock when reload is 0 (#16)",
 	},
 	{
 		name:      "mmc3_test_6_mmc6.nes",
@@ -222,7 +221,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "e6bdbadf46cc4bf7b26e496ecab44e60a8b1279c1b9cf16df090c9832adf6943",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_6_BIN",
 		maxFrames: 2500,
-		knownFail: "status $02 — IRQ should be set when reloading to 0 after clear (#16)",
+		knownFail: "status $03 (Failed #3) — IRQ shouldn't occur when reloading after counter normally reaches 0; needs deferred $2006 v-update / sub-cycle A12 timing (#25)",
 	},
 	{
 		// Blargg sprite_overflow_tests (1.Basics representative). The
