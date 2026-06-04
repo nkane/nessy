@@ -107,6 +107,11 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 						}
 					}
 				},
+				// Serve nessy's NES-specific debug state (PPU / OAM /
+				// mapper / APU) over `nessy/*` custom requests — the
+				// foundation the chippy TUI debugger panels read (#28).
+				// Runs under cpuMu, so the snapshot is coherent.
+				CustomRequestHandler: debugRequestHandler(bus),
 			}
 			if err := s.AttachExisting(cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "nessy: DAP attach:", err)

@@ -53,6 +53,31 @@ nessy -dbg path/to/game.dbg # explicit override
 
 See [`dap.md`](../dap.md) for protocol details and [`editors.md`](../editors.md) for the per-editor support matrix.
 
+## NES debug-state channel
+
+Everything above is CPU-side — it's the chippy 6502 debugger. The
+NES-specific inspection tools (PPU / nametable / sprite / event viewers,
+multi-space memory + access heatmap, register + APU state) are landing
+as TUI panels under the [debugger epic (#27)](https://github.com/nkane/nessy/issues/27).
+
+Their foundation ([#28](https://github.com/nkane/nessy/issues/28)) is a
+DAP **custom request** the chippy TUI sends to pull a coherent snapshot
+of NES state:
+
+- Command: `nessy/debugState` (served via chippy/dap's
+  `AttachConfig.CustomRequestHandler`, added in chippy v1.4.0).
+- The handler runs under the CPU lock the DAP dispatcher already holds,
+  so every field reflects the same instruction boundary — no mid-step
+  tearing.
+- Response body is a versioned `DebugSnapshot`: frame/scanline/dot
+  timing, the 6502 register file, PPU register latches + scroll state,
+  APU channel + frame-counter state, and the active mapper's state.
+
+The panel-specific issues (#29–#35) each extend the snapshot with their
+own section (full OAM, nametable bytes, per-dot event log, access
+heatmaps), so a routine poll stays cheap until a panel needs the heavy
+data.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)

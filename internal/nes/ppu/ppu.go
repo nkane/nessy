@@ -939,6 +939,40 @@ func (p *PPU) Status() byte { return p.status }
 func (p *PPU) Scanline() int { return p.scanline }
 func (p *PPU) Dot() int      { return p.dot }
 
+// DebugRegs is a cheap, side-effect-free snapshot of the PPU register
+// latches + internal scroll state for the debugger (#28). Unlike
+// SaveFullState it copies no framebuffers / VRAM / OAM, so the debug
+// channel can poll it without allocating ~256 KiB per call. Status is
+// read WITHOUT the vblank-clear side effect of a real $2002 read.
+type DebugRegs struct {
+	Ctrl    byte   `json:"ctrl"`    // $2000
+	Mask    byte   `json:"mask"`    // $2001
+	Status  byte   `json:"status"`  // $2002 (no read side effect)
+	OAMAddr byte   `json:"oamAddr"` // $2003
+	V       uint16 `json:"v"`       // current VRAM address
+	T       uint16 `json:"t"`       // temp VRAM address
+	X       byte   `json:"x"`       // fine-X scroll (0-7)
+	W       bool   `json:"w"`       // write toggle
+	ReadBuf byte   `json:"readBuf"` // $2007 read buffer
+	OpenBus byte   `json:"openBus"` // last value on the PPU I/O bus
+}
+
+// DebugRegs captures the register latches for the debug channel.
+func (p *PPU) DebugRegs() DebugRegs {
+	return DebugRegs{
+		Ctrl:    p.ctrl,
+		Mask:    p.mask,
+		Status:  p.status,
+		OAMAddr: p.oamAddr,
+		V:       p.v,
+		T:       p.t,
+		X:       p.x,
+		W:       p.w,
+		ReadBuf: p.readBuf,
+		OpenBus: p.openBus,
+	}
+}
+
 // WriteOAM is the entry point for $4014 OAMDMA once it lands — copies a
 // byte into OAM at the current oamAddr cursor and bumps. Exposed
 // separately from $2004 so a future OAMDMA peripheral doesn't have to
