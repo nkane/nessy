@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.9.9
-	github.com/nkane/chippy v1.2.0
+	github.com/nkane/chippy v1.4.0
 )
 
 require (
