@@ -20,6 +20,13 @@ const debugSnapshotVersion = 1
 // "nessy/" so it can't collide with a future built-in DAP command.
 const debugStateCommand = "nessy/debugState"
 
+// ppuViewerCommand pulls the heavyweight PPU-render state (pattern
+// tables, nametables, palette, scroll) for the tilemap / pattern /
+// palette panels (#29). Separate from debugStateCommand so a routine
+// status poll stays cheap and the ~12 KiB viewer payload only crosses
+// the wire when a panel is open.
+const ppuViewerCommand = "nessy/ppuViewer"
+
 // DebugSnapshot is the coherent, paused-state capture of NES debug
 // state served over the DAP "nessy/debugState" custom request (#28).
 //
@@ -103,6 +110,8 @@ func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage)
 				return nil, true, err
 			}
 			return snap, true, nil
+		case ppuViewerCommand:
+			return bus.ppu.DebugPPUViewer(), true, nil
 		default:
 			return nil, false, nil
 		}
