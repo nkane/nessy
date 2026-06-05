@@ -137,6 +137,23 @@ func TestDebugRequestHandler(t *testing.T) {
 		t.Error("RegisterView PPU ctrl decode inconsistent with raw byte")
 	}
 
+	// ppuMemory command → handled with a MemorySpaces body.
+	mAny, handled, err := h(ppuMemoryCommand, nil)
+	if err != nil {
+		t.Fatalf("%s: err = %v", ppuMemoryCommand, err)
+	}
+	if !handled {
+		t.Fatalf("%s: handled = false; want true", ppuMemoryCommand)
+	}
+	ms, ok := mAny.(ppu.MemorySpaces)
+	if !ok {
+		t.Fatalf("%s: body type = %T; want ppu.MemorySpaces", ppuMemoryCommand, mAny)
+	}
+	if len(ms.VRAM) != 0x800 || len(ms.Palette) != 32 || len(ms.OAM) != 256 || len(ms.CHR) != 0x2000 {
+		t.Errorf("MemorySpaces shape: vram=%d pal=%d oam=%d chr=%d; want 2048/32/256/8192",
+			len(ms.VRAM), len(ms.Palette), len(ms.OAM), len(ms.CHR))
+	}
+
 	_, handled, err = h("some/unknown", nil)
 	if err != nil {
 		t.Errorf("unknown command: err = %v; want nil", err)

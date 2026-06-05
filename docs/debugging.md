@@ -110,6 +110,20 @@ stays light:
   register state — self-contained so the panel renders without
   cross-referencing the routine status snapshot.
 
+### Memory viewer ([#32](https://github.com/nkane/nessy/issues/32))
+
+- **CPU bus** ($0000-$FFFF, incl. PRG-RAM) is read through the standard
+  DAP `readMemory` request — chippy's side-effect-free `MMIO.Peek`.
+- **PPU-side spaces** use a nessy custom request: `nessy/ppuMemory`
+  returns a `MemorySpaces` with the 2 KiB nametable RAM, 32-byte
+  palette, 256-byte OAM, and the 8 KiB pattern space ($0000-$1FFF) as
+  currently banked. CHR goes through the side-effect-free `PeekCHR`
+  path (no MMC3 A12 clock).
+- Access **heatmap** (read/write/exec decay shading) and **freeze**
+  (write-suppress) need CPU-bus hot-path hooks chippy doesn't have yet
+  — tracked in chippy's host-hook epic (chippy#419 → #421 heatmap,
+  #422 freeze) and consumed by a nessy follow-up.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)
