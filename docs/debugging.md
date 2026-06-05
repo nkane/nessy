@@ -101,6 +101,15 @@ stays light:
   sprites decoded — X/Y, tile, palette, priority, H/V flip, and an
   on-screen flag (Y < `$EF`). OAM order is priority order.
 
+### Register viewer ([#34](https://github.com/nkane/nessy/issues/34))
+
+- Command: `nessy/registers`.
+- Response is a `RegisterView`: the PPU register latches with named bit
+  breakdowns (PPUCTRL/MASK/STATUS flags + scroll/address state), the
+  full APU channel + frame-counter state, and the active mapper's
+  register state — self-contained so the panel renders without
+  cross-referencing the routine status snapshot.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)

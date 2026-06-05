@@ -32,6 +32,35 @@ const ppuViewerCommand = "nessy/ppuViewer"
 // routine status poll doesn't carry it.
 const spriteViewerCommand = "nessy/spriteViewer"
 
+// registerViewCommand pulls the fully-decoded PPU / APU / cart register
+// state for the register viewer panel (#34) — self-contained so the
+// panel renders without cross-referencing the routine status snapshot.
+const registerViewCommand = "nessy/registers"
+
+// RegisterView is the decoded register state for the register viewer
+// (#34): PPU latches with named bit breakdowns, the full APU channel +
+// frame-counter state (already field-named), and the active mapper's
+// register state.
+type RegisterView struct {
+	PPU  ppu.PPURegisters `json:"ppu"`
+	APU  apu.FullState    `json:"apu"`
+	Cart cart.CartState   `json:"cart"`
+}
+
+// registerView captures the decoded register state. Callers hold the
+// CPU mutex (the DAP dispatcher does) for a coherent read.
+func (b *nesBus) registerView() (RegisterView, error) {
+	cs, err := cart.SaveCart(b.cart)
+	if err != nil {
+		return RegisterView{}, fmt.Errorf("register view: cart state: %w", err)
+	}
+	return RegisterView{
+		PPU:  b.ppu.DecodedRegisters(),
+		APU:  b.apu.SaveFullState(),
+		Cart: cs,
+	}, nil
+}
+
 // DebugSnapshot is the coherent, paused-state capture of NES debug
 // state served over the DAP "nessy/debugState" custom request (#28).
 //
@@ -119,6 +148,12 @@ func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage)
 			return bus.ppu.DebugPPUViewer(), true, nil
 		case spriteViewerCommand:
 			return bus.ppu.DebugSpriteViewer(), true, nil
+		case registerViewCommand:
+			rv, err := bus.registerView()
+			if err != nil {
+				return nil, true, err
+			}
+			return rv, true, nil
 		default:
 			return nil, false, nil
 		}

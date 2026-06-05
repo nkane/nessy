@@ -986,6 +986,99 @@ func (p *PPU) DebugRegs() DebugRegs {
 	}
 }
 
+// PPUCtrlBits decodes PPUCTRL ($2000).
+type PPUCtrlBits struct {
+	BaseNametable     byte `json:"baseNametable"`     // bits 0-1 ($2000/$2400/$2800/$2C00)
+	VRAMIncrement32   bool `json:"vramIncrement32"`   // bit 2 (0 = +1, 1 = +32)
+	SpritePatternHigh bool `json:"spritePatternHigh"` // bit 3 ($1000, 8x8 only)
+	BGPatternHigh     bool `json:"bgPatternHigh"`     // bit 4 ($1000)
+	Sprite8x16        bool `json:"sprite8x16"`        // bit 5
+	MasterSlave       bool `json:"masterSlave"`       // bit 6 (EXT bus dir)
+	NMIEnable         bool `json:"nmiEnable"`         // bit 7
+}
+
+// PPUMaskBits decodes PPUMASK ($2001).
+type PPUMaskBits struct {
+	Grayscale       bool `json:"grayscale"`       // bit 0
+	ShowBGLeft      bool `json:"showBGLeft"`      // bit 1
+	ShowSpritesLeft bool `json:"showSpritesLeft"` // bit 2
+	ShowBG          bool `json:"showBG"`          // bit 3
+	ShowSprites     bool `json:"showSprites"`     // bit 4
+	EmphasizeR      bool `json:"emphasizeR"`      // bit 5 (R/G swap on PAL)
+	EmphasizeG      bool `json:"emphasizeG"`      // bit 6
+	EmphasizeB      bool `json:"emphasizeB"`      // bit 7
+}
+
+// PPUStatusBits decodes PPUSTATUS ($2002).
+type PPUStatusBits struct {
+	SpriteOverflow bool `json:"spriteOverflow"` // bit 5
+	Sprite0Hit     bool `json:"sprite0Hit"`     // bit 6
+	VBlank         bool `json:"vblank"`         // bit 7
+}
+
+// PPURegisters is the fully-decoded PPU register file for the register
+// viewer (#34): each MMIO latch as its raw byte plus a named bit
+// breakdown, alongside the internal scroll/address state.
+type PPURegisters struct {
+	Ctrl       byte          `json:"ctrl"`
+	CtrlBits   PPUCtrlBits   `json:"ctrlBits"`
+	Mask       byte          `json:"mask"`
+	MaskBits   PPUMaskBits   `json:"maskBits"`
+	Status     byte          `json:"status"` // no $2002 read side effect
+	StatusBits PPUStatusBits `json:"statusBits"`
+	OAMAddr    byte          `json:"oamAddr"`
+	V          uint16        `json:"v"`
+	T          uint16        `json:"t"`
+	WriteLatch bool          `json:"writeLatch"` // $2005/$2006 first/second-write toggle
+	Scroll     DebugScroll   `json:"scroll"`
+}
+
+// DecodedRegisters returns the PPU register file with named bit
+// breakdowns for the register viewer. Side-effect-free (Status read
+// without the $2002 vblank-clear).
+func (p *PPU) DecodedRegisters() PPURegisters {
+	return PPURegisters{
+		Ctrl: p.ctrl,
+		CtrlBits: PPUCtrlBits{
+			BaseNametable:     p.ctrl & 0x03,
+			VRAMIncrement32:   p.ctrl&0x04 != 0,
+			SpritePatternHigh: p.ctrl&0x08 != 0,
+			BGPatternHigh:     p.ctrl&0x10 != 0,
+			Sprite8x16:        p.ctrl&0x20 != 0,
+			MasterSlave:       p.ctrl&0x40 != 0,
+			NMIEnable:         p.ctrl&0x80 != 0,
+		},
+		Mask: p.mask,
+		MaskBits: PPUMaskBits{
+			Grayscale:       p.mask&0x01 != 0,
+			ShowBGLeft:      p.mask&0x02 != 0,
+			ShowSpritesLeft: p.mask&0x04 != 0,
+			ShowBG:          p.mask&0x08 != 0,
+			ShowSprites:     p.mask&0x10 != 0,
+			EmphasizeR:      p.mask&0x20 != 0,
+			EmphasizeG:      p.mask&0x40 != 0,
+			EmphasizeB:      p.mask&0x80 != 0,
+		},
+		Status: p.status,
+		StatusBits: PPUStatusBits{
+			SpriteOverflow: p.status&0x20 != 0,
+			Sprite0Hit:     p.status&0x40 != 0,
+			VBlank:         p.status&0x80 != 0,
+		},
+		OAMAddr:    p.oamAddr,
+		V:          p.v,
+		T:          p.t,
+		WriteLatch: p.w,
+		Scroll: DebugScroll{
+			CoarseX:   byte(p.v & 0x1F),
+			CoarseY:   byte((p.v >> 5) & 0x1F),
+			NameTable: byte((p.v >> 10) & 0x03),
+			FineY:     byte((p.v >> 12) & 0x07),
+			FineX:     p.x,
+		},
+	}
+}
+
 // DebugScroll is the decoded scroll cursor for the PPU viewer (#29):
 // the coarse/fine X+Y and nametable-select packed in the `v` register
 // plus the fine-X latch `x`. This is the rectangle the tilemap panel
