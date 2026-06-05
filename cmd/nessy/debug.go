@@ -27,6 +27,11 @@ const debugStateCommand = "nessy/debugState"
 // the wire when a panel is open.
 const ppuViewerCommand = "nessy/ppuViewer"
 
+// spriteViewerCommand pulls OAM + decoded sprite state for the sprite
+// viewer panel (#30). OAM is small, but it's its own request so the
+// routine status poll doesn't carry it.
+const spriteViewerCommand = "nessy/spriteViewer"
+
 // DebugSnapshot is the coherent, paused-state capture of NES debug
 // state served over the DAP "nessy/debugState" custom request (#28).
 //
@@ -112,6 +117,8 @@ func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage)
 			return snap, true, nil
 		case ppuViewerCommand:
 			return bus.ppu.DebugPPUViewer(), true, nil
+		case spriteViewerCommand:
+			return bus.ppu.DebugSpriteViewer(), true, nil
 		default:
 			return nil, false, nil
 		}

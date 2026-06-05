@@ -101,6 +101,22 @@ func TestDebugRequestHandler(t *testing.T) {
 			len(view.PatternTables), len(view.NameTables), len(view.Palette))
 	}
 
+	// spriteViewer command → handled with a SpriteViewer body.
+	sv, handled, err := h(spriteViewerCommand, nil)
+	if err != nil {
+		t.Fatalf("%s: err = %v", spriteViewerCommand, err)
+	}
+	if !handled {
+		t.Fatalf("%s: handled = false; want true", spriteViewerCommand)
+	}
+	sview, ok := sv.(ppu.SpriteViewer)
+	if !ok {
+		t.Fatalf("%s: body type = %T; want ppu.SpriteViewer", spriteViewerCommand, sv)
+	}
+	if len(sview.OAM) != 256 || len(sview.Sprites) != 64 {
+		t.Errorf("SpriteViewer shape: oam=%d sprites=%d; want 256/64", len(sview.OAM), len(sview.Sprites))
+	}
+
 	_, handled, err = h("some/unknown", nil)
 	if err != nil {
 		t.Errorf("unknown command: err = %v; want nil", err)
