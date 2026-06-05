@@ -117,6 +117,26 @@ func TestDebugRequestHandler(t *testing.T) {
 		t.Errorf("SpriteViewer shape: oam=%d sprites=%d; want 256/64", len(sview.OAM), len(sview.Sprites))
 	}
 
+	// registers command → handled with a decoded RegisterView body.
+	rvAny, handled, err := h(registerViewCommand, nil)
+	if err != nil {
+		t.Fatalf("%s: err = %v", registerViewCommand, err)
+	}
+	if !handled {
+		t.Fatalf("%s: handled = false; want true", registerViewCommand)
+	}
+	rv, ok := rvAny.(RegisterView)
+	if !ok {
+		t.Fatalf("%s: body type = %T; want RegisterView", registerViewCommand, rvAny)
+	}
+	if rv.Cart.Kind != "NROM" {
+		t.Errorf("RegisterView Cart.Kind = %q; want NROM", rv.Cart.Kind)
+	}
+	// PPU sub-struct must be populated (decoded bits consistent with raw).
+	if rv.PPU.CtrlBits.NMIEnable != (rv.PPU.Ctrl&0x80 != 0) {
+		t.Error("RegisterView PPU ctrl decode inconsistent with raw byte")
+	}
+
 	_, handled, err = h("some/unknown", nil)
 	if err != nil {
 		t.Errorf("unknown command: err = %v; want nil", err)

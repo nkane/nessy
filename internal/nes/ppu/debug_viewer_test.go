@@ -2,6 +2,35 @@ package ppu_test
 
 import "testing"
 
+// DecodedRegisters breaks PPUCTRL / PPUMASK into named flags.
+func TestDecodedRegisters(t *testing.T) {
+	p, _, _ := newMMC3PPU(t)
+	// PPUCTRL = $A8: NMI enable (bit7) + 8x16 sprites (bit5) + sprite
+	// pattern $1000 (bit3); base nametable 0.
+	p.Write(0x2000, 0xA8)
+	// PPUMASK = $1E: show BG/sprites + their left columns.
+	p.Write(0x2001, 0x1E)
+
+	r := p.DecodedRegisters()
+	if r.Ctrl != 0xA8 || r.Mask != 0x1E {
+		t.Fatalf("raw regs = ctrl$%02X mask$%02X; want $A8/$1E", r.Ctrl, r.Mask)
+	}
+	cb := r.CtrlBits
+	if !cb.NMIEnable || !cb.Sprite8x16 || !cb.SpritePatternHigh {
+		t.Errorf("ctrl decode = nmi%v 8x16%v sprPat%v; want all true", cb.NMIEnable, cb.Sprite8x16, cb.SpritePatternHigh)
+	}
+	if cb.BGPatternHigh || cb.VRAMIncrement32 || cb.BaseNametable != 0 {
+		t.Errorf("ctrl decode unexpected: bgPat%v inc32%v baseNT%d", cb.BGPatternHigh, cb.VRAMIncrement32, cb.BaseNametable)
+	}
+	mb := r.MaskBits
+	if !mb.ShowBG || !mb.ShowSprites || !mb.ShowBGLeft || !mb.ShowSpritesLeft {
+		t.Errorf("mask decode = bg%v spr%v bgL%v sprL%v; want all true", mb.ShowBG, mb.ShowSprites, mb.ShowBGLeft, mb.ShowSpritesLeft)
+	}
+	if mb.Grayscale || mb.EmphasizeR || mb.EmphasizeG || mb.EmphasizeB {
+		t.Errorf("mask decode unexpected emphasis/grayscale set")
+	}
+}
+
 // DebugSpriteViewer decodes OAM into per-sprite fields. Write a sprite
 // via $2003/$2004, flip PPUCTRL to 8x16, and verify the decode +
 // register context.
