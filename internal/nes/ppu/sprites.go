@@ -277,6 +277,9 @@ func (p *PPU) renderSprites() {
 				// sprite behind BG — real silicon checks the overlap,
 				// not the visible result.
 				if i == 0 && canHitSprite0 && p.bgOpaque[pxIdx] {
+					if p.status&0x40 == 0 {
+						p.recordEvent(eventSprite0, 0, 0)
+					}
 					p.status |= 0x40
 				}
 

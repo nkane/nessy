@@ -38,6 +38,15 @@ const spriteViewerCommand = "nessy/spriteViewer"
 // bus spaces are exposed here.
 const ppuMemoryCommand = "nessy/ppuMemory"
 
+// Event viewer commands (#31). Recording is opt-in (off by default for
+// zero hot-path cost); eventFrame returns the last completed frame's
+// per-dot event log.
+const (
+	eventStartCommand = "nessy/eventStart"
+	eventStopCommand  = "nessy/eventStop"
+	eventFrameCommand = "nessy/eventFrame"
+)
+
 // Trace logger commands (#35). Start opens a file + assigns the
 // NES-aware tracer to the CPU; stop flushes/closes + detaches it;
 // status reports progress. Detaching on stop keeps the no-trace hot
@@ -184,6 +193,14 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer) func(command string, ar
 			return rv, true, nil
 		case ppuMemoryCommand:
 			return bus.ppu.DebugMemorySpaces(), true, nil
+		case eventStartCommand:
+			bus.ppu.SetEventRecording(true)
+			return map[string]bool{"recording": true}, true, nil
+		case eventStopCommand:
+			bus.ppu.SetEventRecording(false)
+			return map[string]bool{"recording": false}, true, nil
+		case eventFrameCommand:
+			return map[string]any{"events": bus.ppu.EventFrame()}, true, nil
 		case traceStartCommand:
 			var a traceStartArgs
 			if len(args) > 0 {

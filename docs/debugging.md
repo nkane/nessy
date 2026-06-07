@@ -139,6 +139,23 @@ The tracer attaches to the CPU only while running, so the no-trace hot
 path stays at zero cost (the core skips a nil tracer). Buffered at 64 KiB;
 torn down automatically on debugger disconnect.
 
+### Event viewer ([#31](https://github.com/nkane/nessy/issues/31))
+
+A per-dot map of one frame's significant events, located at the
+(scanline, dot) each occurred.
+
+- `nessy/eventStart` / `nessy/eventStop` — toggle recording (off by
+  default, so capture costs nothing until a debugger asks).
+- `nessy/eventFrame` — `{ events: [...] }` for the most recently
+  completed frame (the in-progress frame isn't returned until it
+  finishes, so the panel always sees a whole frame).
+
+Each event carries `scanline`, `dot`, `kind`, and (for register events)
+`addr` + `value`. The first cut records the PPU-observable events:
+register writes (`regWrite`), register reads (`regRead`), the NMI line's
+rising edge (`nmi`), and sprite-0 hit (`sprite0`). Mapper IRQ and
+DMC/OAM DMA events need cart/DMA wiring and land in a follow-up.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)
