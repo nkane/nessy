@@ -67,7 +67,7 @@ func TestDebugSnapshot_JSONRoundTrip(t *testing.T) {
 // server's "not implemented" path (handled=false).
 func TestDebugRequestHandler(t *testing.T) {
 	bus := newTestBus(t)
-	h := debugRequestHandler(bus)
+	h := debugRequestHandler(bus, newNESTracer(bus.ppu))
 
 	body, handled, err := h(debugStateCommand, nil)
 	if err != nil {
