@@ -32,6 +32,12 @@ const ppuViewerCommand = "nessy/ppuViewer"
 // routine status poll doesn't carry it.
 const spriteViewerCommand = "nessy/spriteViewer"
 
+// ppuMemoryCommand pulls the PPU-side memory spaces (VRAM / palette /
+// OAM / CHR) for the memory viewer (#32). The CPU bus + PRG-RAM are
+// served by the standard DAP readMemory request, so only the non-CPU-
+// bus spaces are exposed here.
+const ppuMemoryCommand = "nessy/ppuMemory"
+
 // registerViewCommand pulls the fully-decoded PPU / APU / cart register
 // state for the register viewer panel (#34) — self-contained so the
 // panel renders without cross-referencing the routine status snapshot.
@@ -154,6 +160,8 @@ func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage)
 				return nil, true, err
 			}
 			return rv, true, nil
+		case ppuMemoryCommand:
+			return bus.ppu.DebugMemorySpaces(), true, nil
 		default:
 			return nil, false, nil
 		}

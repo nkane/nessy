@@ -2,6 +2,38 @@ package ppu_test
 
 import "testing"
 
+// DebugMemorySpaces returns the PPU-side spaces at the right sizes,
+// reflects live writes, and dumps CHR without clocking MMC3 A12.
+func TestDebugMemorySpaces(t *testing.T) {
+	p, c, sink := newMMC3PPU(t)
+	c.CPUWrite(0xC000, 1) // latch — would fire on an A12 edge
+	c.CPUWrite(0xC001, 0)
+	c.CPUWrite(0xE001, 0) // enable IRQ
+
+	// Write a byte into nametable 0 ($2000) + a palette entry ($3F01).
+	p.Write(0x2006, 0x20)
+	p.Write(0x2006, 0x00)
+	p.Write(0x2007, 0x7E)
+	p.Write(0x2006, 0x3F)
+	p.Write(0x2006, 0x01)
+	p.Write(0x2007, 0x15)
+
+	m := p.DebugMemorySpaces()
+	if len(m.VRAM) != 0x800 || len(m.Palette) != 32 || len(m.OAM) != 256 || len(m.CHR) != 0x2000 {
+		t.Fatalf("sizes: vram=%d pal=%d oam=%d chr=%d; want 2048/32/256/8192",
+			len(m.VRAM), len(m.Palette), len(m.OAM), len(m.CHR))
+	}
+	if m.VRAM[0] != 0x7E {
+		t.Errorf("VRAM[0] = $%02X; want $7E", m.VRAM[0])
+	}
+	if m.Palette[1] != 0x15 {
+		t.Errorf("Palette[1] = $%02X; want $15", m.Palette[1])
+	}
+	if sink.asserts != 0 {
+		t.Errorf("DebugMemorySpaces clocked MMC3 A12 %d times; want 0 (CHR dump must be side-effect-free)", sink.asserts)
+	}
+}
+
 // DecodedRegisters breaks PPUCTRL / PPUMASK into named flags.
 func TestDecodedRegisters(t *testing.T) {
 	p, _, _ := newMMC3PPU(t)

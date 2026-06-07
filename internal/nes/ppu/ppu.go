@@ -1185,6 +1185,35 @@ func (p *PPU) DebugSpriteViewer() SpriteViewer {
 	}
 }
 
+// MemorySpaces is the PPU-side memory the debugger's memory viewer
+// shows as distinct address spaces (#32). The CPU bus ($0000-$FFFF,
+// incl. PRG-RAM) is reachable through the standard DAP readMemory
+// request, so it's NOT duplicated here — this covers only the spaces
+// that don't live on the CPU bus. All reads are side-effect-free.
+type MemorySpaces struct {
+	VRAM    []byte `json:"vram"`    // 2 KiB physical nametable RAM
+	Palette []byte `json:"palette"` // 32-byte palette RAM
+	OAM     []byte `json:"oam"`     // 256-byte sprite RAM
+	CHR     []byte `json:"chr"`     // 8 KiB pattern space ($0000-$1FFF), current banking
+}
+
+// DebugMemorySpaces snapshots the PPU-side memory spaces for the memory
+// viewer. CHR goes through the side-effect-free PeekCHR path (no MMC3
+// A12 clock).
+func (p *PPU) DebugMemorySpaces() MemorySpaces {
+	vram := make([]byte, len(p.vram))
+	copy(vram, p.vram[:])
+	pal := make([]byte, len(p.palette))
+	copy(pal, p.palette[:])
+	oam := make([]byte, len(p.oam))
+	copy(oam, p.oam[:])
+	chr := make([]byte, 0x2000)
+	for a := range chr {
+		chr[a] = p.debugCHR(uint16(a))
+	}
+	return MemorySpaces{VRAM: vram, Palette: pal, OAM: oam, CHR: chr}
+}
+
 // debugCHR reads a CHR byte with no side effects (no A12 clock).
 func (p *PPU) debugCHR(addr uint16) byte {
 	switch {
