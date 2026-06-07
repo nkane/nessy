@@ -65,6 +65,9 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 		go func(c net.Conn) {
 			defer func() { _ = c.Close() }()
 			s := dap.NewServer(c, c)
+			// Per-connection NES-aware trace logger (#35). Attached to
+			// the CPU only while a trace runs; torn down on disconnect.
+			tracer := newNESTracer(bus.ppu)
 			cfg := dap.AttachConfig{
 				CPU:    bus.cpu,
 				RAM:    bus.ram,
@@ -91,6 +94,14 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 					fmt.Fprintln(os.Stderr, "nessy: DAP client attached — debugger has control of CPU execution")
 				},
 				OnDisconnected: func() {
+					// Tear down any running trace before the game loop
+					// resumes. Detach the tracer first — done while
+					// dapAttached is still >0 (the clamp below hasn't
+					// run yet), so the game loop is still gated off and
+					// can't race the CPU.Tracer write — then flush the
+					// file.
+					bus.cpu.Tracer = nil
+					_, _, _ = tracer.stop()
 					// Clamp at zero. The dap.Server promises to
 					// pair OnAttached with OnDisconnected, but we
 					// keep the floor as defensive depth — a stray
@@ -111,7 +122,7 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 				// mapper / APU) over `nessy/*` custom requests — the
 				// foundation the chippy TUI debugger panels read (#28).
 				// Runs under cpuMu, so the snapshot is coherent.
-				CustomRequestHandler: debugRequestHandler(bus),
+				CustomRequestHandler: debugRequestHandler(bus, tracer),
 			}
 			if err := s.AttachExisting(cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "nessy: DAP attach:", err)

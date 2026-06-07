@@ -38,6 +38,28 @@ const spriteViewerCommand = "nessy/spriteViewer"
 // bus spaces are exposed here.
 const ppuMemoryCommand = "nessy/ppuMemory"
 
+// Trace logger commands (#35). Start opens a file + assigns the
+// NES-aware tracer to the CPU; stop flushes/closes + detaches it;
+// status reports progress. Detaching on stop keeps the no-trace hot
+// path at zero cost.
+const (
+	traceStartCommand  = "nessy/traceStart"
+	traceStopCommand   = "nessy/traceStop"
+	traceStatusCommand = "nessy/traceStatus"
+)
+
+// traceStartArgs is the body of a traceStart request.
+type traceStartArgs struct {
+	Path string `json:"path"`
+}
+
+// traceStatus is the response for the trace control commands.
+type traceStatus struct {
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path"`
+	Lines   uint64 `json:"lines"`
+}
+
 // registerViewCommand pulls the fully-decoded PPU / APU / cart register
 // state for the register viewer panel (#34) — self-contained so the
 // panel renders without cross-referencing the routine status snapshot.
@@ -141,8 +163,8 @@ func (b *nesBus) debugSnapshot() (DebugSnapshot, error) {
 // return handled=false so the DAP server falls through to its standard
 // "not implemented" error. The handler runs under the CPU lock held by
 // the dispatcher, so debugSnapshot observes a coherent state.
-func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage) (any, bool, error) {
-	return func(command string, _ json.RawMessage) (any, bool, error) {
+func debugRequestHandler(bus *nesBus, tracer *nesTracer) func(command string, args json.RawMessage) (any, bool, error) {
+	return func(command string, args json.RawMessage) (any, bool, error) {
 		switch command {
 		case debugStateCommand:
 			snap, err := bus.debugSnapshot()
@@ -162,6 +184,32 @@ func debugRequestHandler(bus *nesBus) func(command string, args json.RawMessage)
 			return rv, true, nil
 		case ppuMemoryCommand:
 			return bus.ppu.DebugMemorySpaces(), true, nil
+		case traceStartCommand:
+			var a traceStartArgs
+			if len(args) > 0 {
+				if err := json.Unmarshal(args, &a); err != nil {
+					return nil, true, fmt.Errorf("traceStart: bad args: %w", err)
+				}
+			}
+			if err := tracer.start(a.Path); err != nil {
+				return nil, true, err
+			}
+			// Attach only while tracing so the no-trace hot path skips a
+			// nil CPU.Tracer. Safe under the dispatcher's CPU lock.
+			bus.cpu.Tracer = tracer
+			en, p, l := tracer.status()
+			return traceStatus{Enabled: en, Path: p, Lines: l}, true, nil
+		case traceStopCommand:
+			// Detach before flushing so no further LogStep can fire.
+			bus.cpu.Tracer = nil
+			p, l, err := tracer.stop()
+			if err != nil {
+				return nil, true, err
+			}
+			return traceStatus{Enabled: false, Path: p, Lines: l}, true, nil
+		case traceStatusCommand:
+			en, p, l := tracer.status()
+			return traceStatus{Enabled: en, Path: p, Lines: l}, true, nil
 		default:
 			return nil, false, nil
 		}

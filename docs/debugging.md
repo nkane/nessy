@@ -124,6 +124,21 @@ stays light:
   — tracked in chippy's host-hook epic (chippy#419 → #421 heatmap,
   #422 freeze) and consumed by a nessy follow-up.
 
+### Trace logger ([#35](https://github.com/nkane/nessy/issues/35))
+
+Streams CPU execution to a file in an NES-aware format — the chippy CPU
+trace columns (PC, opcode bytes, disassembly, A/X/Y/P/SP, CYC) plus the
+PPU cursor (`PPU:scanline,dot FRM:frame`) so a trace lines up with what
+the PPU was doing.
+
+- `nessy/traceStart` `{ "path": "..." }` — open the file + begin tracing.
+- `nessy/traceStop` — flush + close; returns the line count.
+- `nessy/traceStatus` — `{ enabled, path, lines }`.
+
+The tracer attaches to the CPU only while running, so the no-trace hot
+path stays at zero cost (the core skips a nil tracer). Buffered at 64 KiB;
+torn down automatically on debugger disconnect.
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)
