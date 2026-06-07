@@ -34,6 +34,58 @@ func TestDebugMemorySpaces(t *testing.T) {
 	}
 }
 
+// The event viewer records per-dot register accesses into the completed
+// frame's log; recording off means no events.
+func TestEventViewer(t *testing.T) {
+	p, _, _ := newMMC3PPU(t)
+
+	// Recording off by default: register access produces nothing.
+	p.Write(0x2000, 0x80)
+	for range 30000 { // advance > 1 full frame
+		p.Tick(1)
+	}
+	if got := p.EventFrame(); len(got) != 0 {
+		t.Errorf("events recorded while disabled: %d; want 0", len(got))
+	}
+
+	// Enable, touch registers, advance past a frame boundary so the log
+	// rotates to the completed buffer.
+	p.SetEventRecording(true)
+	p.Write(0x2000, 0x80) // regWrite $2000 (also enables NMI)
+	p.Read(0x2002)        // regRead $2002
+	for range 30000 {
+		p.Tick(1)
+	}
+
+	ev := p.EventFrame()
+	if len(ev) == 0 {
+		t.Fatal("no events recorded while enabled")
+	}
+	var sawWrite, sawRead, sawNMI bool
+	for _, e := range ev {
+		switch {
+		case e.Kind == "regWrite" && e.Addr == 0x2000:
+			sawWrite = true
+		case e.Kind == "regRead" && e.Addr == 0x2002:
+			sawRead = true
+		case e.Kind == "nmi":
+			sawNMI = true
+		}
+		if e.Scanline < 0 || e.Dot < 0 {
+			t.Errorf("event has bad cursor: %+v", e)
+		}
+	}
+	if !sawWrite {
+		t.Error("no regWrite $2000 event recorded")
+	}
+	if !sawRead {
+		t.Error("no regRead $2002 event recorded")
+	}
+	if !sawNMI {
+		t.Error("no nmi event recorded (NMI was enabled)")
+	}
+}
+
 // DecodedRegisters breaks PPUCTRL / PPUMASK into named flags.
 func TestDecodedRegisters(t *testing.T) {
 	p, _, _ := newMMC3PPU(t)

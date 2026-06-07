@@ -154,6 +154,22 @@ func TestDebugRequestHandler(t *testing.T) {
 			len(ms.VRAM), len(ms.Palette), len(ms.OAM), len(ms.CHR))
 	}
 
+	// event commands → start/stop toggle recording; eventFrame returns
+	// an events payload.
+	if _, handled, err = h(eventStartCommand, nil); err != nil || !handled {
+		t.Fatalf("eventStart: handled=%v err=%v", handled, err)
+	}
+	efAny, handled, err := h(eventFrameCommand, nil)
+	if err != nil || !handled {
+		t.Fatalf("eventFrame: handled=%v err=%v", handled, err)
+	}
+	if _, ok := efAny.(map[string]any)["events"]; !ok {
+		t.Errorf("eventFrame body missing \"events\" key: %#v", efAny)
+	}
+	if _, handled, err = h(eventStopCommand, nil); err != nil || !handled {
+		t.Fatalf("eventStop: handled=%v err=%v", handled, err)
+	}
+
 	_, handled, err = h("some/unknown", nil)
 	if err != nil {
 		t.Errorf("unknown command: err = %v; want nil", err)

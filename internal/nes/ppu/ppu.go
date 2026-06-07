@@ -87,6 +87,14 @@ type PPU struct {
 	chrPeek  chrPeeker    // non-nil iff cart implements PeekCHR (MMC3)
 	nmi      NMI
 
+	// Debug event log (#31). eventRec gates capture; events accumulates
+	// the in-progress frame, eventsLast holds the last completed frame.
+	// nmiLevelPrev tracks the NMI line for rising-edge event detection.
+	eventRec     bool
+	events       []DebugEvent
+	eventsLast   []DebugEvent
+	nmiLevelPrev bool
+
 	// Latched registers ($2000-$2007).
 	ctrl    byte // $2000 PPUCTRL
 	mask    byte // $2001 PPUMASK
@@ -315,12 +323,19 @@ func (p *PPU) Range() (uint16, uint16) { return 0x2000, 0x3FFF }
 // updateNMI drives the CPU's /NMI line from the current (vblank-flag AND
 // PPUCTRL.7). Called whenever the flag or PPUCTRL bit 7 changes (#342).
 func (p *PPU) updateNMI() {
+	level := p.status&0x80 != 0 && p.ctrl&0x80 != 0
+	// Record the NMI line's rising edge for the event viewer (#31).
+	if level && !p.nmiLevelPrev {
+		p.recordEvent(eventNMI, 0, 0)
+	}
+	p.nmiLevelPrev = level
 	if p.nmi != nil {
-		p.nmi.SetNMILine(p.status&0x80 != 0 && p.ctrl&0x80 != 0)
+		p.nmi.SetNMILine(level)
 	}
 }
 
 func (p *PPU) Read(addr uint16) byte {
+	p.recordEvent(eventRegRead, uint16(0x2000|(addr&0x0007)), 0)
 	switch 0x2000 | (addr & 0x0007) {
 	case 0x2002:
 		// PPUSTATUS: top 3 bits (vblank / sprite-0 / overflow) come
@@ -389,7 +404,9 @@ func (p *PPU) Read(addr uint16) byte {
 // updates the open-bus latch with the byte that just crossed the bus.
 func (p *PPU) Write(addr uint16, v byte) {
 	p.openBus = v
-	switch 0x2000 | (addr & 0x0007) {
+	reg := uint16(0x2000 | (addr & 0x0007))
+	p.recordEvent(eventRegWrite, reg, v)
+	switch reg {
 	case 0x2000:
 		prev := p.ctrl
 		p.ctrl = v
@@ -617,6 +634,9 @@ func (p *PPU) checkSprite0HitForScanline(y int) {
 		bgHi := p.busRead(bgAddr + 8)
 		bgB := uint(7 - fineX)
 		if ((bgLo>>bgB)&1)|((bgHi>>bgB)&1) != 0 {
+			if p.status&0x40 == 0 {
+				p.recordEvent(eventSprite0, 0, 0)
+			}
 			p.status |= 0x40
 			return
 		}
@@ -791,6 +811,8 @@ func (p *PPU) stepDot() {
 		if p.scanline >= p.timing.ScanlinesPerFrame {
 			p.scanline = 0
 			p.frameCount++
+			// Publish the finished frame's event log + start fresh (#31).
+			p.rotateEvents()
 			// New frame begins. Snapshot the current scroll values so
 			// renderFrame at this frame's eventual vblank entry knows
 			// what was active for the scanlines that precede any
@@ -1212,6 +1234,75 @@ func (p *PPU) DebugMemorySpaces() MemorySpaces {
 		chr[a] = p.debugCHR(uint16(a))
 	}
 	return MemorySpaces{VRAM: vram, Palette: pal, OAM: oam, CHR: chr}
+}
+
+// DebugEvent is one significant PPU-frame event for the event viewer
+// (#31), located at the (scanline, dot) it occurred. Kind is a stable
+// string the panel keys its colors off.
+type DebugEvent struct {
+	Scanline int    `json:"scanline"`
+	Dot      int    `json:"dot"`
+	Kind     string `json:"kind"`  // "regWrite" | "regRead" | "nmi" | "sprite0"
+	Addr     uint16 `json:"addr"`  // register address for reg events, else 0
+	Value    byte   `json:"value"` // written value for regWrite, else 0
+}
+
+// Event kind tags.
+const (
+	eventRegWrite = "regWrite"
+	eventRegRead  = "regRead"
+	eventNMI      = "nmi"
+	eventSprite0  = "sprite0"
+)
+
+// maxEventsPerFrame caps a single frame's event log so a ROM that spams
+// $2007 can't grow it without bound. Beyond the cap, events are dropped
+// (a full visible frame's register traffic is well under this).
+const maxEventsPerFrame = 16384
+
+// SetEventRecording enables/disables per-dot event capture (#31). Off by
+// default — when off, recordEvent is a cheap no-op so the emulator's hot
+// path is unaffected unless a debugger asks for events. Toggling clears
+// the in-progress buffer.
+func (p *PPU) SetEventRecording(on bool) {
+	p.eventRec = on
+	p.events = p.events[:0]
+	if !on {
+		p.eventsLast = nil
+	}
+}
+
+// EventFrame returns a copy of the most recently COMPLETED frame's event
+// log (the in-progress frame isn't returned until it finishes, so the
+// panel always sees a whole frame).
+func (p *PPU) EventFrame() []DebugEvent {
+	out := make([]DebugEvent, len(p.eventsLast))
+	copy(out, p.eventsLast)
+	return out
+}
+
+// recordEvent appends an event at the current cursor when recording.
+func (p *PPU) recordEvent(kind string, addr uint16, val byte) {
+	if !p.eventRec || len(p.events) >= maxEventsPerFrame {
+		return
+	}
+	p.events = append(p.events, DebugEvent{
+		Scanline: p.scanline,
+		Dot:      p.dot,
+		Kind:     kind,
+		Addr:     addr,
+		Value:    val,
+	})
+}
+
+// rotateEvents publishes the just-finished frame's events + starts a
+// fresh buffer. Called at the frame boundary.
+func (p *PPU) rotateEvents() {
+	if !p.eventRec {
+		return
+	}
+	p.eventsLast = p.events
+	p.events = nil
 }
 
 // debugCHR reads a CHR byte with no side effects (no A12 clock).
