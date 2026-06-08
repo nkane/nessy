@@ -102,6 +102,20 @@ jobs:
           go-version: 'stable'
           cache: true
 
+      # Cache the downloaded test ROMs across runs so the suite doesn't
+      # re-fetch ~30 ROMs from GitHub raw every time (which intermittently
+      # 504s and reds the gate — #46). os.UserCacheDir() resolves to
+      # ~/.cache here; ROMs live under chippy-tests/. Key off the ROM
+      # table so adding/changing a ROM busts the cache. The in-test
+      # retry/backoff covers a cold-cache 504.
+      - name: Cache accuracy ROMs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/chippy-tests
+          key: accuracy-roms-${{ hashFiles('cmd/nessy/accuracy_test.go') }}
+          restore-keys: |
+            accuracy-roms-
+
       - name: Run accuracy suite
         run: go test -tags=accuracy -timeout 5m -run TestAccuracy -v ./cmd/nessy/...
 
