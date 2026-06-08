@@ -28,9 +28,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -379,17 +381,90 @@ func loadAccuracyROM(t *testing.T, rom accuracyROM) ([]byte, error) {
 	return data, nil
 }
 
+// httpGet fetches url with bounded retry + linear backoff. GitHub raw
+// (where the test ROMs live) intermittently returns 5xx/504, so a
+// single transient failure must not red the accuracy gate — see #46.
+// Network errors and 5xx/429 responses are retried; other 4xx are
+// fatal (a real bad URL won't self-heal).
 func httpGet(url string, timeout time.Duration) ([]byte, error) {
+	const attempts = 4
+	var lastErr error
+	for i := range attempts {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * 2 * time.Second) // 2s, 4s, 6s
+		}
+		data, retry, err := httpGetOnce(url, timeout)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !retry {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("%s: giving up after %d attempts: %w", url, attempts, lastErr)
+}
+
+// httpGetOnce performs one fetch. retry reports whether the failure is
+// transient (worth another attempt).
+func httpGetOnce(url string, timeout time.Duration) (data []byte, retry bool, err error) {
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, true, err // network/timeout: transient
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http %s: status %d", url, resp.StatusCode)
+		transient := resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+		return nil, transient, fmt.Errorf("http %s: status %d", url, resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, true, err
+	}
+	return body, false, nil
+}
+
+// httpGet retries a transient 5xx then succeeds — the GitHub raw 504
+// case that used to red the accuracy gate (#46).
+func TestHTTPGetRetriesTransient(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 2 {
+			w.WriteHeader(http.StatusGatewayTimeout) // 504
+			return
+		}
+		_, _ = w.Write([]byte("rom-bytes"))
+	}))
+	defer srv.Close()
+
+	data, err := httpGet(srv.URL, 5*time.Second)
+	if err != nil {
+		t.Fatalf("httpGet: %v", err)
+	}
+	if string(data) != "rom-bytes" {
+		t.Errorf("body = %q; want rom-bytes", data)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("server calls = %d; want 2 (one 504 retry + success)", n)
+	}
+}
+
+// A non-transient 4xx is fatal — no retry (a bad URL won't self-heal).
+func TestHTTPGetFatalOn4xx(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusNotFound) // 404
+	}))
+	defer srv.Close()
+
+	if _, err := httpGet(srv.URL, 5*time.Second); err == nil {
+		t.Fatal("httpGet: err = nil; want 404 error")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("server calls = %d; want 1 (no retry on 404)", n)
+	}
 }
 
 func hashHex(data []byte) string {
