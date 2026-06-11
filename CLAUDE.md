@@ -197,14 +197,20 @@ Rolling trackers (carried over from chippy):
 
 ## Chippy library dependency
 
-`go.mod` pins `github.com/nkane/chippy v1.2.0` (or later). Bumping the
+`go.mod` pins `github.com/nkane/chippy v1.5.0` (or later). Bumping the
 chippy version pulls in new CPU core fixes; the public packages used:
 
 - `chippy/cpu` — the 6502 / 2A03 implementation, `cpu.Variant{NMOS, NES,
   CMOS65C02}`, `cpu.ProcessPendingDma`, `cpu.SetNeedSpriteDma`,
   `cpu.SetNeedDmcDma`.
 - `chippy/dap` — the DAP server used by `cmd/nessy/dap.go` for the game-side
-  `chippy -dap-attach` workflow.
+  `chippy -dap-attach` workflow. `AttachConfig.CustomRequestHandler`
+  (v1.4.0) backs nessy's `nessy/*` debug requests (#28+).
+- **Debugger host hooks (v1.5.0, chippy#419)** — for the remaining
+  debugger panels: `cpu.SetAccessHook` + `cpu.AccessKind` (memory access
+  heatmap, #41), `cpu.RAM.Freeze`/`Unfreeze`/`Frozen` (freeze, #41),
+  `dap.Server.SetHostVars` (NES-aware breakpoint conditions) +
+  `SetStopPredicate` (run-to-NMI / step-scanline, #33).
 - `chippy/peripheral` — `peripheral.Peripheral` interface for MMIO.
 - `chippy/symbols` — symbol table for source-level debugging.
 - `chippy/trace` — execution trace.
