@@ -3,10 +3,13 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nkane/chippy/dap"
 )
 
 // The trace logger writes NES-aware lines while enabled, and detaches
@@ -15,7 +18,7 @@ import (
 func TestTraceLogger(t *testing.T) {
 	bus := newTestBus(t)
 	tracer := newNESTracer(bus.ppu)
-	h := debugRequestHandler(bus, tracer)
+	h := debugRequestHandler(bus, tracer, dap.NewServer(strings.NewReader(""), io.Discard))
 	path := filepath.Join(t.TempDir(), "trace.log")
 
 	// Start.
@@ -68,7 +71,7 @@ func TestTraceLogger(t *testing.T) {
 func TestTraceLogger_NoPathErrorsAndStatus(t *testing.T) {
 	bus := newTestBus(t)
 	tracer := newNESTracer(bus.ppu)
-	h := debugRequestHandler(bus, tracer)
+	h := debugRequestHandler(bus, tracer, dap.NewServer(strings.NewReader(""), io.Discard))
 
 	_, handled, err := h(traceStartCommand, []byte(`{"path":""}`))
 	if !handled {

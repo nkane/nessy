@@ -4,11 +4,22 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 
+	"github.com/nkane/chippy/dap"
 	"github.com/nkane/nessy/internal/nes"
 	"github.com/nkane/nessy/internal/nes/ppu"
 )
+
+// newTestHandler builds the custom-request handler with a throwaway DAP
+// server (its transport is never driven; the step commands only set the
+// server's stop-predicate field).
+func newTestHandler(bus *nesBus) func(string, json.RawMessage) (any, bool, error) {
+	srv := dap.NewServer(strings.NewReader(""), io.Discard)
+	return debugRequestHandler(bus, newNESTracer(bus.ppu), srv)
+}
 
 func newTestBus(t *testing.T) *nesBus {
 	t.Helper()
@@ -67,7 +78,7 @@ func TestDebugSnapshot_JSONRoundTrip(t *testing.T) {
 // server's "not implemented" path (handled=false).
 func TestDebugRequestHandler(t *testing.T) {
 	bus := newTestBus(t)
-	h := debugRequestHandler(bus, newNESTracer(bus.ppu))
+	h := newTestHandler(bus)
 
 	body, handled, err := h(debugStateCommand, nil)
 	if err != nil {
@@ -168,6 +179,22 @@ func TestDebugRequestHandler(t *testing.T) {
 	}
 	if _, handled, err = h(eventStopCommand, nil); err != nil || !handled {
 		t.Fatalf("eventStop: handled=%v err=%v", handled, err)
+	}
+
+	// step-granularity commands → handled, with an armed ack.
+	for _, tc := range []struct{ cmd, armed string }{
+		{stepScanlineCommand, "scanline"},
+		{stepFrameCommand, "frame"},
+		{runToNMICommand, "nmi"},
+		{clearStepCommand, "none"},
+	} {
+		body, handled, err := h(tc.cmd, nil)
+		if err != nil || !handled {
+			t.Fatalf("%s: handled=%v err=%v", tc.cmd, handled, err)
+		}
+		if got := body.(map[string]string)["armed"]; got != tc.armed {
+			t.Errorf("%s armed=%q; want %q", tc.cmd, got, tc.armed)
+		}
 	}
 
 	_, handled, err = h("some/unknown", nil)
