@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/nkane/chippy/dap"
 	"github.com/nkane/nessy/internal/nes/apu"
 	"github.com/nkane/nessy/internal/nes/cart"
 	"github.com/nkane/nessy/internal/nes/ppu"
@@ -37,6 +38,18 @@ const spriteViewerCommand = "nessy/spriteViewer"
 // served by the standard DAP readMemory request, so only the non-CPU-
 // bus spaces are exposed here.
 const ppuMemoryCommand = "nessy/ppuMemory"
+
+// Breakpoint / step-granularity commands (#33). NES-aware conditional
+// breakpoints work via SetHostVars (registered at attach), so they need
+// no command here. These arm chippy's host stop-predicate for NES step
+// granularity; the client arms one, sends `continue`, and clears it when
+// the `stopped` event arrives.
+const (
+	stepScanlineCommand = "nessy/stepScanline"
+	stepFrameCommand    = "nessy/stepFrame"
+	runToNMICommand     = "nessy/runToNMI"
+	clearStepCommand    = "nessy/clearStep"
+)
 
 // Event viewer commands (#31). Recording is opt-in (off by default for
 // zero hot-path cost); eventFrame returns the last completed frame's
@@ -172,7 +185,7 @@ func (b *nesBus) debugSnapshot() (DebugSnapshot, error) {
 // return handled=false so the DAP server falls through to its standard
 // "not implemented" error. The handler runs under the CPU lock held by
 // the dispatcher, so debugSnapshot observes a coherent state.
-func debugRequestHandler(bus *nesBus, tracer *nesTracer) func(command string, args json.RawMessage) (any, bool, error) {
+func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server) func(command string, args json.RawMessage) (any, bool, error) {
 	return func(command string, args json.RawMessage) (any, bool, error) {
 		switch command {
 		case debugStateCommand:
@@ -201,6 +214,18 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer) func(command string, ar
 			return map[string]bool{"recording": false}, true, nil
 		case eventFrameCommand:
 			return map[string]any{"events": bus.ppu.EventFrame()}, true, nil
+		case stepScanlineCommand:
+			srv.SetStopPredicate(stepScanlinePredicate(bus))
+			return map[string]string{"armed": "scanline"}, true, nil
+		case stepFrameCommand:
+			srv.SetStopPredicate(stepFramePredicate(bus))
+			return map[string]string{"armed": "frame"}, true, nil
+		case runToNMICommand:
+			srv.SetStopPredicate(runToNMIPredicate(bus))
+			return map[string]string{"armed": "nmi"}, true, nil
+		case clearStepCommand:
+			srv.SetStopPredicate(nil)
+			return map[string]string{"armed": "none"}, true, nil
 		case traceStartCommand:
 			var a traceStartArgs
 			if len(args) > 0 {

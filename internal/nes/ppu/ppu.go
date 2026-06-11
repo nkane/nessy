@@ -992,6 +992,13 @@ type DebugRegs struct {
 	OpenBus byte   `json:"openBus"` // last value on the PPU I/O bus
 }
 
+// NMILine reports the current /NMI line level the PPU drives to the CPU
+// (vblank flag AND PPUCTRL.7). The debugger's run-to-NMI step watches
+// this for a rising edge (#33).
+func (p *PPU) NMILine() bool {
+	return p.status&0x80 != 0 && p.ctrl&0x80 != 0
+}
+
 // DebugRegs captures the register latches for the debug channel.
 func (p *PPU) DebugRegs() DebugRegs {
 	return DebugRegs{

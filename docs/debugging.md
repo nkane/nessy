@@ -156,6 +156,24 @@ register writes (`regWrite`), register reads (`regRead`), the NMI line's
 rising edge (`nmi`), and sprite-0 hit (`sprite0`). Mapper IRQ and
 DMC/OAM DMA events need cart/DMA wiring and land in a follow-up.
 
+### Breakpoints + step granularity ([#33](https://github.com/nkane/nessy/issues/33))
+
+Built on chippy v1.5.0's host hooks (chippy#419):
+
+- **NES-aware conditional breakpoints** — nessy registers `scanline`,
+  `dot`, and `frame` with chippy's expression evaluator
+  (`SetHostVars`), so a conditional breakpoint or watch like
+  `scanline == 30 && dot > 256` resolves against PPU state the 6502 core
+  can't see. No extra request — it's live the moment a debugger attaches.
+- **NES step granularity** — custom requests arm chippy's host
+  stop-predicate (`SetStopPredicate`): `nessy/stepScanline` (run to the
+  next scanline), `nessy/stepFrame` (next frame), `nessy/runToNMI` (next
+  /NMI rising edge), `nessy/clearStep` (disarm). The client arms one,
+  sends `continue`, and clears it when the `stopped` event arrives.
+
+Typed read/write/exec breakpoints on PPU memory + MMIO registers are a
+follow-up (they need nessy-side access interception).
+
 ## Live demo
 
 ![nessy-attach](https://github.com/nkane/chippy/raw/main/test/smoke/out/nessy-attach.gif)
