@@ -68,6 +68,9 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 			// Per-connection NES-aware trace logger (#35). Attached to
 			// the CPU only while a trace runs; torn down on disconnect.
 			tracer := newNESTracer(bus.ppu)
+			// Per-connection memory access heatmap (#41). Allocates only
+			// when started; the CPU access hook is removed on disconnect.
+			heatmap := newAccessHeatmap()
 			cfg := dap.AttachConfig{
 				CPU:    bus.cpu,
 				RAM:    bus.ram,
@@ -102,6 +105,10 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 					// file.
 					bus.cpu.Tracer = nil
 					_, _, _ = tracer.stop()
+					// Remove the access hook so heatmap recording stops
+					// when the debugger leaves (same gating window).
+					bus.cpu.SetAccessHook(nil)
+					heatmap.stop()
 					// Clamp at zero. The dap.Server promises to
 					// pair OnAttached with OnDisconnected, but we
 					// keep the floor as defensive depth — a stray
@@ -122,7 +129,7 @@ func runDAPListener(port int, bus *nesBus, cpuMu *sync.Mutex, syms *symbols.Tabl
 				// mapper / APU) over `nessy/*` custom requests — the
 				// foundation the chippy TUI debugger panels read (#28).
 				// Runs under cpuMu, so the snapshot is coherent.
-				CustomRequestHandler: debugRequestHandler(bus, tracer, s),
+				CustomRequestHandler: debugRequestHandler(bus, tracer, s, heatmap),
 			}
 			if err := s.AttachExisting(cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "nessy: DAP attach:", err)

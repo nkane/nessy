@@ -18,7 +18,7 @@ import (
 // server's stop-predicate field).
 func newTestHandler(bus *nesBus) func(string, json.RawMessage) (any, bool, error) {
 	srv := dap.NewServer(strings.NewReader(""), io.Discard)
-	return debugRequestHandler(bus, newNESTracer(bus.ppu), srv)
+	return debugRequestHandler(bus, newNESTracer(bus.ppu), srv, newAccessHeatmap())
 }
 
 func newTestBus(t *testing.T) *nesBus {
