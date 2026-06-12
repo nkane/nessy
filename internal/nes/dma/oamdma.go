@@ -3,7 +3,11 @@
 // (audio side, $4011 / $4015) lands with the APU in v0.3.
 package dma
 
-import "github.com/nkane/chippy/cpu"
+import (
+	"github.com/nkane/chippy/cpu"
+
+	"github.com/nkane/nessy/internal/nes"
+)
 
 // SpriteDmaSink is the slice of *cpu.CPU OAMDMA needs to kick a
 // transfer. The CPU's ProcessPendingDma loop owns all the bus-level
@@ -23,9 +27,14 @@ type SpriteDmaSink interface {
 // most common observed value) — no shipping ROM reads this register
 // in a way that depends on the result.
 type OAMDMA struct {
-	cpu  SpriteDmaSink
-	last byte // most recently written page selector — surfaced for tests
+	cpu       SpriteDmaSink
+	last      byte // most recently written page selector — surfaced for tests
+	debugSink nes.DebugEventSink
 }
+
+// SetDebugSink wires the event-viewer sink so each $4014 OAM DMA is
+// recorded at the PPU's current scanline/dot (#44). Optional.
+func (d *OAMDMA) SetDebugSink(s nes.DebugEventSink) { d.debugSink = s }
 
 // New constructs an OAMDMA peripheral. The CPU sink must be non-nil
 // or Write will panic; the constructor doesn't enforce that since
@@ -46,6 +55,9 @@ func (d *OAMDMA) Read(addr uint16) byte { return 0 }
 // 513/514-cycle window on its next read via ProcessPendingDma (#376).
 func (d *OAMDMA) Write(addr uint16, page byte) {
 	d.last = page
+	if d.debugSink != nil {
+		d.debugSink.RecordDebugEvent(nes.EventOAMDMA)
+	}
 	d.cpu.SetNeedSpriteDma(page)
 }
 

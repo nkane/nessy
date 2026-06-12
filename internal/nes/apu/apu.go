@@ -288,6 +288,10 @@ func (a *APU) DbgAPUCycles() uint64 { return a.dbgCycles }
 // before SetIRQSink lands harmlessly on the flag-only path.
 func (a *APU) SetIRQSink(s IRQSink) { a.irqSink = s }
 
+// SetDebugSink wires the event-viewer sink so DMC sample-fetch DMAs are
+// recorded at the PPU's current scanline/dot (#44). Optional.
+func (a *APU) SetDebugSink(s nes.DebugEventSink) { a.dmc.debugSink = s }
+
 // SetSunsoft5B wires the audio half of the FME-7 cart so its
 // channel mix gets folded into the APU's sample emission. nil
 // disables the addend (the default for non-FME7 carts).

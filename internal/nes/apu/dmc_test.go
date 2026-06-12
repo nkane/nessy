@@ -1,6 +1,10 @@
 package apu
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nkane/nessy/internal/nes"
+)
 
 // fakeDMCBus serves a flat byte slice as the CPU memory image the
 // DMC reads from. Address arithmetic is mod len so a small slice
@@ -96,6 +100,36 @@ func TestDMC_TimerExpirySignalsFetch(t *testing.T) {
 	}
 	if got := a.GetDmcReadAddress(); got != 0xC000 {
 		t.Errorf("GetDmcReadAddress = $%04X; want $C000 (sample base)", got)
+	}
+}
+
+// captureDebugSink records DMC-DMA debug events.
+type captureDebugSink struct{ kinds []string }
+
+func (s *captureDebugSink) RecordDebugEvent(kind string) { s.kinds = append(s.kinds, kind) }
+
+// A scheduled DMC sample fetch records a debug event for the event
+// viewer (#44).
+func TestDMC_RecordsDMAEvent(t *testing.T) {
+	a := New()
+	s := NewStatus(a)
+	bus := &fakeDMCBus{bytes: []byte{0xC3, 0x5A, 0xFF}}
+	staller := &fakeDMCStaller{}
+	setupDMC(a, bus, staller, nil)
+	dbg := &captureDebugSink{}
+	a.SetDebugSink(dbg)
+	a.Write(0x4013, 0x01) // length = 17 bytes
+	s.Write(0x4015, 0x10) // enable DMC
+	a.Tick(5000)          // drive a refill request
+
+	found := false
+	for _, k := range dbg.kinds {
+		if k == nes.EventDMCDMA {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no %q event recorded; got %v", nes.EventDMCDMA, dbg.kinds)
 	}
 }
 

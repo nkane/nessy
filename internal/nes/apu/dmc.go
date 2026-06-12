@@ -1,5 +1,7 @@
 package apu
 
+import "github.com/nkane/nessy/internal/nes"
+
 // dmcChannel models the NES delta-modulation channel ($4010-$4013).
 // Plays 1-bit delta samples fetched from CPU memory. Two side
 // effects vs the other channels: the DMA byte fetch steals CPU
@@ -57,6 +59,17 @@ type dmcChannel struct {
 	// fires so a second timer expiry inside the same DMA window
 	// doesn't queue a duplicate fetch.
 	fetchPending bool
+
+	// debugSink (optional) records a DMC-DMA event for the event viewer
+	// (#44) each time a sample fetch is scheduled.
+	debugSink nes.DebugEventSink
+}
+
+// recordDMA stamps a DMC-DMA event when a debug sink is wired.
+func (d *dmcChannel) recordDMA() {
+	if d.debugSink != nil {
+		d.debugSink.RecordDebugEvent(nes.EventDMCDMA)
+	}
 }
 
 // DMCBus is the slice of the CPU bus the DMC reads sample bytes
@@ -132,6 +145,7 @@ func (d *dmcChannel) setEnabled(on bool, staller DMCStaller) {
 		// has been clocked through.
 		if d.bytesRemaining > 0 && d.bufferEmpty && staller != nil && !d.fetchPending {
 			d.fetchPending = true
+			d.recordDMA()
 			staller.SetNeedDmcDma()
 		}
 	} else {
@@ -196,6 +210,7 @@ func (d *dmcChannel) clock(staller DMCStaller) {
 	}
 	if d.bufferEmpty && d.bytesRemaining > 0 && staller != nil && !d.fetchPending {
 		d.fetchPending = true
+		d.recordDMA()
 		staller.SetNeedDmcDma()
 	}
 }

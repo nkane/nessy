@@ -1,6 +1,26 @@
 package dma
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nkane/nessy/internal/nes"
+)
+
+// fakeDebugSink records event-viewer kinds.
+type fakeDebugSink struct{ kinds []string }
+
+func (s *fakeDebugSink) RecordDebugEvent(kind string) { s.kinds = append(s.kinds, kind) }
+
+// A $4014 write records an OAM-DMA event for the event viewer (#44).
+func TestOAMDMA_RecordsDebugEvent(t *testing.T) {
+	d := New(&fakeSink{})
+	dbg := &fakeDebugSink{}
+	d.SetDebugSink(dbg)
+	d.Write(0x4014, 0x02)
+	if len(dbg.kinds) != 1 || dbg.kinds[0] != nes.EventOAMDMA {
+		t.Errorf("debug events = %v; want one %q", dbg.kinds, nes.EventOAMDMA)
+	}
+}
 
 // fakeSink records SetNeedSpriteDma calls. OAMDMA hands the page
 // across; CPU's ProcessPendingDma drains the actual transfer (#376).
