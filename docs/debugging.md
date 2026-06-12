@@ -119,10 +119,18 @@ stays light:
   palette, 256-byte OAM, and the 8 KiB pattern space ($0000-$1FFF) as
   currently banked. CHR goes through the side-effect-free `PeekCHR`
   path (no MMC3 A12 clock).
-- Access **heatmap** (read/write/exec decay shading) and **freeze**
-  (write-suppress) need CPU-bus hot-path hooks chippy doesn't have yet
-  — tracked in chippy's host-hook epic (chippy#419 → #421 heatmap,
-  #422 freeze) and consumed by a nessy follow-up.
+- Access **heatmap** + **freeze** ride chippy v1.5.0's host hooks
+  (chippy#419):
+  - `nessy/heatmapStart` / `nessy/heatmapStop` toggle recording (installs
+    `cpu.SetAccessHook`; allocates 1.5 MiB only on start). `nessy/heatmap`
+    `{ start, length }` returns per-byte last-access cycle stamps
+    (`read` / `write` / `exec` + `currentCycle`) for a CPU-address window;
+    the panel shades decay from `currentCycle − stamp`.
+  - `nessy/freeze` `{ addr, value }` locks a CPU-bus address (chippy
+    `RAM.Freeze` — write-suppressed); `nessy/unfreeze` `{ addr }` and
+    `nessy/frozen` (lists frozen addresses) round it out.
+  - PPU-side-space heatmap/freeze (instrumenting `ppu.busRead`/`busWrite`)
+    is a follow-up.
 
 ### Trace logger ([#35](https://github.com/nkane/nessy/issues/35))
 

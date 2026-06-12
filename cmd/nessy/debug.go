@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/nkane/chippy/cpu"
 	"github.com/nkane/chippy/dap"
 	"github.com/nkane/nessy/internal/nes/apu"
 	"github.com/nkane/nessy/internal/nes/cart"
@@ -38,6 +39,29 @@ const spriteViewerCommand = "nessy/spriteViewer"
 // served by the standard DAP readMemory request, so only the non-CPU-
 // bus spaces are exposed here.
 const ppuMemoryCommand = "nessy/ppuMemory"
+
+// Memory access-heatmap + freeze commands (#41). Heatmap recording is
+// opt-in (allocates 1.5 MiB only on start); freeze locks a CPU-bus
+// address to a value via chippy's RAM.Freeze.
+const (
+	heatmapStartCommand = "nessy/heatmapStart"
+	heatmapStopCommand  = "nessy/heatmapStop"
+	heatmapCommand      = "nessy/heatmap"
+	freezeCommand       = "nessy/freeze"
+	unfreezeCommand     = "nessy/unfreeze"
+	frozenCommand       = "nessy/frozen"
+)
+
+// heatmapArgs / freezeArgs are the request bodies.
+type heatmapArgs struct {
+	Start  int `json:"start"`
+	Length int `json:"length"`
+}
+
+type freezeArgs struct {
+	Addr  uint16 `json:"addr"`
+	Value byte   `json:"value"`
+}
 
 // Breakpoint / step-granularity commands (#33). NES-aware conditional
 // breakpoints work via SetHostVars (registered at attach), so they need
@@ -185,7 +209,7 @@ func (b *nesBus) debugSnapshot() (DebugSnapshot, error) {
 // return handled=false so the DAP server falls through to its standard
 // "not implemented" error. The handler runs under the CPU lock held by
 // the dispatcher, so debugSnapshot observes a coherent state.
-func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server) func(command string, args json.RawMessage) (any, bool, error) {
+func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server, heatmap *accessHeatmap) func(command string, args json.RawMessage) (any, bool, error) {
 	return func(command string, args json.RawMessage) (any, bool, error) {
 		switch command {
 		case debugStateCommand:
@@ -226,6 +250,40 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server) func(c
 		case clearStepCommand:
 			srv.SetStopPredicate(nil)
 			return map[string]string{"armed": "none"}, true, nil
+		case heatmapStartCommand:
+			heatmap.start()
+			bus.cpu.SetAccessHook(func(addr uint16, kind cpu.AccessKind) {
+				heatmap.record(addr, kind, bus.cpu.Cycles)
+			})
+			return map[string]bool{"recording": true}, true, nil
+		case heatmapStopCommand:
+			bus.cpu.SetAccessHook(nil)
+			heatmap.stop()
+			return map[string]bool{"recording": false}, true, nil
+		case heatmapCommand:
+			var a heatmapArgs
+			if len(args) > 0 {
+				if err := json.Unmarshal(args, &a); err != nil {
+					return nil, true, fmt.Errorf("heatmap: bad args: %w", err)
+				}
+			}
+			return heatmap.window(a.Start, a.Length, bus.cpu.Cycles), true, nil
+		case freezeCommand:
+			var a freezeArgs
+			if err := json.Unmarshal(args, &a); err != nil {
+				return nil, true, fmt.Errorf("freeze: bad args: %w", err)
+			}
+			bus.ram.Freeze(a.Addr, a.Value)
+			return map[string]any{"addr": a.Addr, "value": a.Value, "frozen": true}, true, nil
+		case unfreezeCommand:
+			var a freezeArgs
+			if err := json.Unmarshal(args, &a); err != nil {
+				return nil, true, fmt.Errorf("unfreeze: bad args: %w", err)
+			}
+			bus.ram.Unfreeze(a.Addr)
+			return map[string]any{"addr": a.Addr, "frozen": false}, true, nil
+		case frozenCommand:
+			return map[string]any{"addrs": bus.ram.FrozenAddrs()}, true, nil
 		case traceStartCommand:
 			var a traceStartArgs
 			if len(args) > 0 {
