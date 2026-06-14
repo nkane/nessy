@@ -8,6 +8,55 @@ import (
 	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
+// irqCounter counts MMC5 IRQ assertions (the cart's IRQSink surface).
+type irqCounter struct{ asserts int }
+
+func (s *irqCounter) AssertIRQSource(string) { s.asserts++ }
+func (s *irqCounter) ClearIRQSource(string)  {}
+
+// With rendering enabled the PPU ticks MMC5's in-frame scanline counter
+// once per scanline, so the scanline IRQ fires within a frame.
+func TestPPU_MMC5ScanlineIRQ(t *testing.T) {
+	rom := &nes.ROM{Mapper: 5, PRG: make([]byte, 32*1024), CHR: make([]byte, 8*1024)}
+	c, err := cart.NewMMC5(rom)
+	if err != nil {
+		t.Fatalf("NewMMC5: %v", err)
+	}
+	sink := &irqCounter{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0x5203, 16)   // target scanline 16
+	c.CPUWrite(0x5204, 0x80) // enable IRQ
+
+	p := ppu.New(c, nil)
+	p.Write(0x2001, 0x08) // show BG → rendering enabled
+
+	// Step a full NTSC frame; the in-frame counter should hit 16.
+	for range nes.NTSC.DotsPerScanline * nes.NTSC.ScanlinesPerFrame {
+		p.Tick(1)
+	}
+	if sink.asserts == 0 {
+		t.Error("MMC5 scanline IRQ never fired across a rendered frame")
+	}
+}
+
+// Rendering disabled → in-frame counter never advances → no IRQ.
+func TestPPU_MMC5NoScanlineIRQWhenRenderingOff(t *testing.T) {
+	rom := &nes.ROM{Mapper: 5, PRG: make([]byte, 32*1024), CHR: make([]byte, 8*1024)}
+	c, _ := cart.NewMMC5(rom)
+	sink := &irqCounter{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0x5203, 16)
+	c.CPUWrite(0x5204, 0x80)
+
+	p := ppu.New(c, nil) // mask stays 0 → rendering off
+	for range nes.NTSC.DotsPerScanline * nes.NTSC.ScanlinesPerFrame {
+		p.Tick(1)
+	}
+	if sink.asserts != 0 {
+		t.Errorf("MMC5 IRQ fired %d times with rendering off; want 0", sink.asserts)
+	}
+}
+
 // With an MMC5 cart the PPU routes $2000-$2FFF through the cart's
 // per-quadrant nametable map: CIRAM banks are PPU-owned + distinct,
 // ExRAM + fill quadrants are cart-backed. Exercised through the real

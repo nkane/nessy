@@ -31,24 +31,26 @@ type CartState struct {
 // PPU-integration phases (nametable mapping, scanline IRQ) add their
 // state fields here as they land.
 type MMC5State struct {
-	PrgMode        byte
-	ChrMode        byte
-	PrgRAMProtect1 byte
-	PrgRAMProtect2 byte
-	ExramMode      byte
-	NtMapping      byte
-	FillTile       byte
-	FillColor      byte
-	ChrUpperBits   byte
-	PrgBanks       [5]byte
-	ChrBanks       [12]byte
-	Mult1, Mult2   byte
-	IRQTarget      byte
-	IRQEnabled     bool
-	IRQPending     bool
-	Exram          [0x400]byte
-	PRGRAM         []byte
-	CHRRAM         []byte
+	PrgMode         byte
+	ChrMode         byte
+	PrgRAMProtect1  byte
+	PrgRAMProtect2  byte
+	ExramMode       byte
+	NtMapping       byte
+	FillTile        byte
+	FillColor       byte
+	ChrUpperBits    byte
+	PrgBanks        [5]byte
+	ChrBanks        [12]byte
+	Mult1, Mult2    byte
+	IRQTarget       byte
+	IRQEnabled      bool
+	IRQPending      bool
+	InFrame         bool
+	ScanlineCounter byte
+	Exram           [0x400]byte
+	PRGRAM          []byte
+	CHRRAM          []byte
 }
 
 // VRC7State — banking + IRQ + PRG-RAM + CHR-RAM (rare). Audio
@@ -623,24 +625,26 @@ func (c *MMC3) loadState(s MMC3State) error {
 
 func (c *MMC5) saveState() *MMC5State {
 	s := &MMC5State{
-		PrgMode:        c.prgMode,
-		ChrMode:        c.chrMode,
-		PrgRAMProtect1: c.prgRAMProtect1,
-		PrgRAMProtect2: c.prgRAMProtect2,
-		ExramMode:      c.exramMode,
-		NtMapping:      c.ntMapping,
-		FillTile:       c.fillTile,
-		FillColor:      c.fillColor,
-		ChrUpperBits:   c.chrUpperBits,
-		PrgBanks:       c.prgBanks,
-		ChrBanks:       c.chrBanks,
-		Mult1:          c.mult1,
-		Mult2:          c.mult2,
-		IRQTarget:      c.irqTarget,
-		IRQEnabled:     c.irqEnabled,
-		IRQPending:     c.irqPending,
-		Exram:          c.exram,
-		PRGRAM:         append([]byte(nil), c.prgRAM...),
+		PrgMode:         c.prgMode,
+		ChrMode:         c.chrMode,
+		PrgRAMProtect1:  c.prgRAMProtect1,
+		PrgRAMProtect2:  c.prgRAMProtect2,
+		ExramMode:       c.exramMode,
+		NtMapping:       c.ntMapping,
+		FillTile:        c.fillTile,
+		FillColor:       c.fillColor,
+		ChrUpperBits:    c.chrUpperBits,
+		PrgBanks:        c.prgBanks,
+		ChrBanks:        c.chrBanks,
+		Mult1:           c.mult1,
+		Mult2:           c.mult2,
+		IRQTarget:       c.irqTarget,
+		IRQEnabled:      c.irqEnabled,
+		IRQPending:      c.irqPending,
+		InFrame:         c.inFrame,
+		ScanlineCounter: c.scanlineCounter,
+		Exram:           c.exram,
+		PRGRAM:          append([]byte(nil), c.prgRAM...),
 	}
 	if c.chrIsRAM {
 		s.CHRRAM = append(s.CHRRAM, c.chr...)
@@ -668,6 +672,8 @@ func (c *MMC5) loadState(s MMC5State) error {
 	c.irqTarget = s.IRQTarget
 	c.irqEnabled = s.IRQEnabled
 	c.irqPending = s.IRQPending
+	c.inFrame = s.InFrame
+	c.scanlineCounter = s.ScanlineCounter
 	c.exram = s.Exram
 	copy(c.prgRAM, s.PRGRAM)
 	if c.chrIsRAM {
