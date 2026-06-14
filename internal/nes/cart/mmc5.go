@@ -302,6 +302,57 @@ func (c *MMC5) Mirroring() nes.Mirroring {
 	}
 }
 
+// nametableID returns $5105's 2-bit source code for the quadrant
+// containing a $2000-$2FFF (or mirrored $3000-$3EFF) address:
+// 0/1 = CIRAM bank, 2 = ExRAM, 3 = fill mode.
+func (c *MMC5) nametableID(addr uint16) byte {
+	quadrant := (addr >> 10) & 0x03
+	return (c.ntMapping >> (quadrant * 2)) & 0x03
+}
+
+// MapNametable reports the physical CIRAM bank (0/1) for the quadrant,
+// or -1 when the cart backs it (ExRAM / fill / empty). Implements the
+// ppu nametableMapper hook (#55).
+func (c *MMC5) MapNametable(addr uint16) int {
+	switch c.nametableID(addr) {
+	case 0:
+		return 0
+	case 1:
+		return 1
+	default: // 2 (ExRAM) or 3 (fill) — cart-backed
+		return -1
+	}
+}
+
+// ReadNametable serves a cart-backed quadrant. ExRAM ($5105 code 2) acts
+// as a nametable only in ExRAM modes 0/1 (otherwise the quadrant reads
+// as empty); fill mode ($5105 code 3) returns the fill tile across the
+// name area and the replicated fill colour across the attribute area.
+func (c *MMC5) ReadNametable(addr uint16) byte {
+	off := addr & 0x03FF
+	switch c.nametableID(addr) {
+	case 2:
+		if c.exramMode <= 1 {
+			return c.exram[off]
+		}
+		return 0 // ExRAM as RAM (modes 2/3) → empty nametable
+	default: // fill mode
+		if off < 0x03C0 {
+			return c.fillTile
+		}
+		// Attribute byte: the 2-bit fill colour in all four 2-bit slots.
+		return c.fillColor * 0x55
+	}
+}
+
+// WriteNametable absorbs a write to a cart-backed quadrant — only ExRAM
+// (modes 0/1) is writable; fill / empty quadrants drop the write.
+func (c *MMC5) WriteNametable(addr uint16, v byte) {
+	if c.nametableID(addr) == 2 && c.exramMode <= 1 {
+		c.exram[addr&0x03FF] = v
+	}
+}
+
 func (c *MMC5) BatteryBacked() bool { return c.battery }
 
 // PRGRAM exposes the first 8 KiB work-RAM bank for save / restore — the

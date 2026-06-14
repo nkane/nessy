@@ -22,10 +22,24 @@ func (p *PPU) busRead(addr uint16) byte {
 		}
 		return 0
 	case addr < 0x3F00:
-		return p.vram[p.nametableIndex(addr)]
+		return p.readNametable(addr)
 	default:
 		return p.palette[paletteIndex(addr)]
 	}
+}
+
+// readNametable resolves a $2000-$3EFF read. With a per-quadrant mapper
+// (MMC5) the cart picks the source: CIRAM bank 0/1 (PPU-owned) or a
+// cart-backed quadrant (ExRAM / fill / empty). Otherwise the fixed
+// mirroring scheme indexes the PPU's 2 KiB CIRAM.
+func (p *PPU) readNametable(addr uint16) byte {
+	if p.ntMap != nil {
+		if bank := p.ntMap.MapNametable(addr); bank >= 0 {
+			return p.vram[uint16(bank)*0x0400+(addr&0x03FF)]
+		}
+		return p.ntMap.ReadNametable(addr)
+	}
+	return p.vram[p.nametableIndex(addr)]
 }
 
 // busWrite routes a PPU-bus write to the right backing store.
@@ -38,12 +52,28 @@ func (p *PPU) busWrite(addr uint16, v byte) {
 			p.cart.PPUWrite(addr, v)
 		}
 	case addr < 0x3F00:
-		p.vram[p.nametableIndex(addr)] = v
+		p.writeNametable(addr, v)
 	default:
 		// Palette entries are 6-bit on real silicon; mask to avoid
 		// surprises in the renderer (e.g. some test ROMs poke $FF).
 		p.palette[paletteIndex(addr)] = v & 0x3F
 	}
+}
+
+// writeNametable resolves a $2000-$3EFF write — the mirror image of
+// readNametable. CIRAM quadrants land in the PPU's 2 KiB; ExRAM
+// quadrants go to the cart; fill / empty quadrants are read-only
+// (writes dropped).
+func (p *PPU) writeNametable(addr uint16, v byte) {
+	if p.ntMap != nil {
+		if bank := p.ntMap.MapNametable(addr); bank >= 0 {
+			p.vram[uint16(bank)*0x0400+(addr&0x03FF)] = v
+		} else {
+			p.ntMap.WriteNametable(addr, v)
+		}
+		return
+	}
+	p.vram[p.nametableIndex(addr)] = v
 }
 
 // nametableIndex maps a PPU-bus nametable address into the PPU's 2 KiB
