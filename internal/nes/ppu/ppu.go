@@ -67,6 +67,21 @@ type chrPeeker interface {
 	PeekCHR(addr uint16) byte
 }
 
+// nametableMapper is the optional cart surface for per-quadrant
+// nametable control (MMC5, #55). For a $2000-$2FFF address the cart
+// reports the source of that quadrant: the PPU owns the two physical
+// CIRAM banks; the cart owns ExRAM / fill-mode / empty quadrants.
+// Carts without it use the fixed Mirroring() scheme.
+type nametableMapper interface {
+	// MapNametable returns the physical CIRAM bank (0 or 1) for the
+	// quadrant containing addr, or -1 when the quadrant is cart-backed
+	// (ExRAM / fill / empty) — the PPU then defers to ReadNametable /
+	// WriteNametable.
+	MapNametable(addr uint16) int
+	ReadNametable(addr uint16) byte
+	WriteNametable(addr uint16, v byte)
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -83,8 +98,9 @@ type NMI interface {
 // to $3FFF.
 type PPU struct {
 	cart     Cart
-	vramHook vramAddrHook // non-nil iff cart implements NotifyVRAMAddr (MMC3)
-	chrPeek  chrPeeker    // non-nil iff cart implements PeekCHR (MMC3)
+	vramHook vramAddrHook    // non-nil iff cart implements NotifyVRAMAddr (MMC3)
+	chrPeek  chrPeeker       // non-nil iff cart implements PeekCHR (MMC3)
+	ntMap    nametableMapper // non-nil iff cart maps nametables per-quadrant (MMC5)
 	nmi      NMI
 
 	// Debug event log (#31). eventRec gates capture; events accumulates
@@ -267,6 +283,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	}
 	if pk, ok := cart.(chrPeeker); ok {
 		p.chrPeek = pk
+	}
+	if nm, ok := cart.(nametableMapper); ok {
+		p.ntMap = nm
 	}
 	p.Reset()
 	return p

@@ -131,6 +131,42 @@ func TestMMC5_PRGRAMWriteProtect(t *testing.T) {
 	}
 }
 
+// $5105 maps each nametable quadrant to a CIRAM bank, ExRAM, or fill.
+func TestMMC5_NametableMapping(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))
+	// q0=CIRAM0(0), q1=CIRAM1(1), q2=ExRAM(2), q3=fill(3): 0b11_10_01_00.
+	c.CPUWrite(0x5105, 0xE4)
+	c.CPUWrite(0x5104, 1)    // ExRAM mode 1 → ExRAM usable as a nametable
+	c.CPUWrite(0x5106, 0x2A) // fill tile
+	c.CPUWrite(0x5107, 0x03) // fill colour (2 bits)
+
+	if got := c.MapNametable(0x2000); got != 0 {
+		t.Errorf("q0 bank = %d; want 0 (CIRAM0)", got)
+	}
+	if got := c.MapNametable(0x2400); got != 1 {
+		t.Errorf("q1 bank = %d; want 1 (CIRAM1)", got)
+	}
+	if got := c.MapNametable(0x2800); got != -1 {
+		t.Errorf("q2 (ExRAM) = %d; want -1 (cart-backed)", got)
+	}
+	if got := c.MapNametable(0x2C00); got != -1 {
+		t.Errorf("q3 (fill) = %d; want -1 (cart-backed)", got)
+	}
+
+	// ExRAM quadrant round-trips through the cart.
+	c.WriteNametable(0x2810, 0x7C)
+	if got := c.ReadNametable(0x2810); got != 0x7C {
+		t.Errorf("ExRAM NT read = $%02X; want $7C", got)
+	}
+	// Fill quadrant: tile byte in the name area, replicated colour in attr.
+	if got := c.ReadNametable(0x2C05); got != 0x2A {
+		t.Errorf("fill tile = $%02X; want $2A", got)
+	}
+	if got := c.ReadNametable(0x2FC0); got != 0x03*0x55 {
+		t.Errorf("fill attr = $%02X; want $%02X", got, 0x03*0x55)
+	}
+}
+
 // save / load round-trips the register file + ExRAM + work RAM.
 func TestMMC5_SaveLoadRoundTrip(t *testing.T) {
 	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))
