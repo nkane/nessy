@@ -232,6 +232,48 @@ func TestMMC5_ScanlineIRQGating(t *testing.T) {
 	}
 }
 
+// In 8x16 sprite mode, sprite CHR fetches use the 'A' set ($5120-$5127)
+// and background fetches the 'B' set ($5128-$512B); in 8x8 mode both use
+// the 'A' set. fillMMC5Rom stamps each 1 KiB bank's first byte with its
+// index, so a $0000 read reveals which bank a slot mapped to.
+func TestMMC5_DualCHR8x16(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 64)) // 64 × 1 KiB CHR
+	c.CPUWrite(0x5101, 3)                  // 1 KiB CHR mode
+	for i := range 8 {
+		c.CPUWrite(uint16(0x5120+i), byte(i)) // A set → banks 0..7
+	}
+	for i := range 4 {
+		c.CPUWrite(uint16(0x5128+i), byte(20+i)) // B set → banks 20..23
+	}
+
+	// 8x16, sprite fetch → A set.
+	c.SetCHRContext(true, true)
+	if got := c.PPURead(0x0000); got != 0 {
+		t.Errorf("8x16 sprite slot0 = bank %d; want 0", got)
+	}
+	if got := c.PPURead(0x1C00); got != 7 {
+		t.Errorf("8x16 sprite slot7 = bank %d; want 7", got)
+	}
+
+	// 8x16, BG fetch → B set ($5128-$512B mirrored across both halves).
+	c.SetCHRContext(false, true)
+	if got := c.PPURead(0x0000); got != 20 {
+		t.Errorf("8x16 BG slot0 = bank %d; want 20", got)
+	}
+	if got := c.PPURead(0x0C00); got != 23 {
+		t.Errorf("8x16 BG slot3 = bank %d; want 23", got)
+	}
+	if got := c.PPURead(0x1000); got != 20 {
+		t.Errorf("8x16 BG slot4 = bank %d; want 20 (B set mirrors)", got)
+	}
+
+	// 8x8: every fetch uses the A set, regardless of sprite/BG phase.
+	c.SetCHRContext(false, false)
+	if got := c.PPURead(0x0000); got != 0 {
+		t.Errorf("8x8 BG slot0 = bank %d; want 0 (A set)", got)
+	}
+}
+
 // save / load round-trips the register file + ExRAM + work RAM.
 func TestMMC5_SaveLoadRoundTrip(t *testing.T) {
 	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))

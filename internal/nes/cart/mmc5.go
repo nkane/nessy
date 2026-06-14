@@ -66,6 +66,12 @@ type MMC5 struct {
 	scanlineCounter byte
 	irqSink         IRQSink
 
+	// CHR fetch context (set per render pass by the PPU): selects the
+	// A/B bank set in 8x16 sprite mode. Transient — re-set every frame,
+	// not part of save-state.
+	spriteFetch  bool
+	largeSprites bool
+
 	exram [0x400]byte // $5C00-$5FFF
 }
 
@@ -301,29 +307,56 @@ func (c *MMC5) PPUWrite(addr uint16, v byte) {
 	c.chr[c.chrOffset(addr)] = v
 }
 
+// SetCHRContext is the ppu chrContext hook (#55): before each CHR-fetch
+// pass the PPU reports whether it's fetching sprite or background
+// patterns and whether 8x16 sprites are active. In 8x16 mode sprite
+// fetches use the 'A' bank set ($5120-$5127) and background fetches the
+// 'B' set ($5128-$512B); in 8x8 mode every fetch uses the 'A' set.
+func (c *MMC5) SetCHRContext(spriteFetch, largeSprites bool) {
+	c.spriteFetch = spriteFetch
+	c.largeSprites = largeSprites
+}
+
 // chrOffset maps a $0000-$1FFF PPU address through the active CHR bank
-// mode. Phase 1 uses the sprite 'A' set ($5120-$5127) for every fetch;
-// the 8x16 BG 'B' set needs PPU fetch context (follow-up phase).
+// mode + the A/B bank set chosen by the current fetch context. The A/B
+// register tables per mode mirror Mesen2 MMC5::UpdateChrBanks.
 func (c *MMC5) chrOffset(addr uint16) int {
 	upper := int(c.chrUpperBits) << 8 // $5130 high bits
+	// 'B' (background) set only differs in 8x16 mode for BG fetches.
+	useB := c.largeSprites && !c.spriteFetch
 	var bank, size int
 	switch c.chrMode {
-	case 0: // 8 KiB
-		bank = int(c.chrBanks[7]) | upper
+	case 0: // 8 KiB — A:$5127  B:$512B
+		idx := 7
+		if useB {
+			idx = 11
+		}
+		bank = int(c.chrBanks[idx]) | upper
 		size = 0x2000
-	case 1: // 4 KiB — $5123 ($0000-$0FFF), $5127 ($1000-$1FFF)
+	case 1: // 4 KiB — A:$5123/$5127  B:$512B
 		idx := 3
 		if addr >= 0x1000 {
 			idx = 7
 		}
+		if useB {
+			idx = 11
+		}
 		bank = int(c.chrBanks[idx]) | upper
 		size = 0x1000
 	case 2: // 2 KiB
-		idx := 1 + int(addr>>11)*2 // $5121/$5123/$5125/$5127
+		slot := int(addr >> 11) // 0..3
+		idx := []int{1, 3, 5, 7}[slot]
+		if useB {
+			idx = []int{9, 11, 9, 11}[slot]
+		}
 		bank = int(c.chrBanks[idx]) | upper
 		size = 0x800
 	default: // 1 KiB
-		idx := int(addr >> 10) // $5120-$5127
+		slot := int(addr >> 10) // 0..7
+		idx := slot
+		if useB {
+			idx = 8 + (slot & 0x03) // $5128-$512B mirrored across both halves
+		}
 		bank = int(c.chrBanks[idx]) | upper
 		size = 0x400
 	}
