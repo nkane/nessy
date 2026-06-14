@@ -274,6 +274,34 @@ func TestMMC5_DualCHR8x16(t *testing.T) {
 	}
 }
 
+// Extended-attribute mode (ExRAM mode 1): each BG tile's palette + CHR
+// bank come from its ExRAM byte (bits 6-7 = palette, bits 0-5 = 4 KiB
+// bank), not the attribute table / normal banking.
+func TestMMC5_ExtendedAttributes(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 64)) // 64 × 1 KiB CHR = 16 × 4 KiB banks
+	c.CPUWrite(0x5104, 1)                  // ExRAM mode 1
+	if !c.ExtendedAttributeActive() {
+		t.Fatal("ExtendedAttributeActive = false in ExRAM mode 1")
+	}
+	// ExRAM[5] = palette 2 (bits 6-7 = 10) + 4 KiB bank 3 (bits 0-5).
+	c.CPUWrite(0x5C05, 0x83)
+
+	pal, low, _ := c.ExtAttrTile(0x2005, 0, 0) // ntAddr offset 5, tile 0, fineY 0
+	if pal != 2 {
+		t.Errorf("ext-attr palette = %d; want 2", pal)
+	}
+	// 4 KiB bank 3 = byte $3000 = 1 KiB-bank 12, whose stamped first byte is 12.
+	if low != 12 {
+		t.Errorf("ext-attr pattern low = %d; want 12 (4 KiB bank 3)", low)
+	}
+
+	// Mode != 1 turns it off.
+	c.CPUWrite(0x5104, 2)
+	if c.ExtendedAttributeActive() {
+		t.Error("ExtendedAttributeActive = true outside ExRAM mode 1")
+	}
+}
+
 // save / load round-trips the register file + ExRAM + work RAM.
 func TestMMC5_SaveLoadRoundTrip(t *testing.T) {
 	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))

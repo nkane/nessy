@@ -99,6 +99,16 @@ type chrContext interface {
 	SetCHRContext(spriteFetch, largeSprites bool)
 }
 
+// extAttrMapper is the optional cart surface for MMC5 extended-attribute
+// mode (ExRAM mode 1, #55). When active, each background tile takes its
+// palette + pattern CHR bank from the corresponding ExRAM byte instead
+// of the attribute table + normal CHR banking. ExtAttrTile returns the
+// 2-bit palette and the tile's pattern bytes for the nametable address.
+type extAttrMapper interface {
+	ExtendedAttributeActive() bool
+	ExtAttrTile(ntAddr uint16, tileIdx byte, fineY uint16) (palette, low, high byte)
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -120,6 +130,7 @@ type PPU struct {
 	ntMap    nametableMapper  // non-nil iff cart maps nametables per-quadrant (MMC5)
 	slNotify scanlineNotifier // non-nil iff cart wants a per-scanline tick (MMC5)
 	chrCtx   chrContext       // non-nil iff cart wants CHR fetch-phase (MMC5 8x16)
+	extAttr  extAttrMapper    // non-nil iff cart supports extended attributes (MMC5)
 	nmi      NMI
 
 	// Debug event log (#31). eventRec gates capture; events accumulates
@@ -311,6 +322,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	}
 	if cc, ok := cart.(chrContext); ok {
 		p.chrCtx = cc
+	}
+	if ea, ok := cart.(extAttrMapper); ok {
+		p.extAttr = ea
 	}
 	p.Reset()
 	return p
