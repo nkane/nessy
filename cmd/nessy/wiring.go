@@ -145,6 +145,10 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 	if m, ok := c.(*cart.MMC3); ok {
 		m.SetDebugSink(pp)
 	}
+	// MMC5 asserts its scanline IRQ on the CPU's named-IRQ surface (#55).
+	if m, ok := c.(*cart.MMC5); ok {
+		m.SetIRQSink(processor)
+	}
 
 	// Region timing (NTSC / PAL / Dendy) from the cart's TV-system
 	// hint. NTSC carts (the overwhelming majority + every demo) keep

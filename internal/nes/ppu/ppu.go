@@ -82,6 +82,14 @@ type nametableMapper interface {
 	WriteNametable(addr uint16, v byte)
 }
 
+// scanlineNotifier is the optional cart surface for a per-scanline tick
+// (MMC5's in-frame scanline IRQ counter, #55). The PPU calls it at the
+// start of every scanline with the rendering state. Carts without it
+// (MMC3 etc. count A12 edges instead) don't implement it.
+type scanlineNotifier interface {
+	NotifyPPUScanline(scanline int, renderingEnabled bool)
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -98,9 +106,10 @@ type NMI interface {
 // to $3FFF.
 type PPU struct {
 	cart     Cart
-	vramHook vramAddrHook    // non-nil iff cart implements NotifyVRAMAddr (MMC3)
-	chrPeek  chrPeeker       // non-nil iff cart implements PeekCHR (MMC3)
-	ntMap    nametableMapper // non-nil iff cart maps nametables per-quadrant (MMC5)
+	vramHook vramAddrHook     // non-nil iff cart implements NotifyVRAMAddr (MMC3)
+	chrPeek  chrPeeker        // non-nil iff cart implements PeekCHR (MMC3)
+	ntMap    nametableMapper  // non-nil iff cart maps nametables per-quadrant (MMC5)
+	slNotify scanlineNotifier // non-nil iff cart wants a per-scanline tick (MMC5)
 	nmi      NMI
 
 	// Debug event log (#31). eventRec gates capture; events accumulates
@@ -286,6 +295,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	}
 	if nm, ok := cart.(nametableMapper); ok {
 		p.ntMap = nm
+	}
+	if sn, ok := cart.(scanlineNotifier); ok {
+		p.slNotify = sn
 	}
 	p.Reset()
 	return p
@@ -854,6 +866,11 @@ func (p *PPU) stepDot() {
 				scrollY:       p.scrollY,
 				baseNametable: p.ctrl & 0x03,
 			}
+		}
+		// A new scanline begins — tick the cart's per-scanline counter
+		// (MMC5 in-frame scanline IRQ, #55). No-op for other mappers.
+		if p.slNotify != nil {
+			p.slNotify.NotifyPPUScanline(p.scanline, p.renderingEnabled())
 		}
 	}
 	// Latch the odd-frame-skip decision at dot 339 of the pre-render

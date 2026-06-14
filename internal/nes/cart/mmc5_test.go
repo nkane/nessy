@@ -167,6 +167,71 @@ func TestMMC5_NametableMapping(t *testing.T) {
 	}
 }
 
+// mmc5FakeSink counts asserts/clears on the "mmc5" IRQ source.
+type mmc5FakeSink struct{ asserts, clears int }
+
+func (s *mmc5FakeSink) AssertIRQSource(src string) {
+	if src == mmc5IRQSource {
+		s.asserts++
+	}
+}
+func (s *mmc5FakeSink) ClearIRQSource(src string) {
+	if src == mmc5IRQSource {
+		s.clears++
+	}
+}
+
+// The in-frame scanline counter fires the IRQ at the target scanline;
+// $5204 read reports pending + in-frame and de-asserts.
+func TestMMC5_ScanlineIRQ(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))
+	sink := &mmc5FakeSink{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0x5203, 5)    // target scanline 5
+	c.CPUWrite(0x5204, 0x80) // enable IRQ
+
+	// First visible scanline arms the counter (0); it then increments
+	// per scanline and fires when it reaches 5 (the 6th visible line).
+	for sl := 0; sl <= 5; sl++ {
+		c.NotifyPPUScanline(sl, true)
+	}
+	if sink.asserts == 0 {
+		t.Fatal("MMC5 scanline IRQ never asserted at the target")
+	}
+
+	st := c.CPURead(0x5204)
+	if st&0x80 == 0 {
+		t.Error("$5204 bit7 (pending) not set")
+	}
+	if st&0x40 == 0 {
+		t.Error("$5204 bit6 (in-frame) not set while rendering")
+	}
+	if sink.clears == 0 {
+		t.Error("$5204 read should de-assert the IRQ line")
+	}
+
+	// Rendering off clears the in-frame flag.
+	c.NotifyPPUScanline(10, false)
+	if c.CPURead(0x5204)&0x40 != 0 {
+		t.Error("in-frame should clear when rendering is off")
+	}
+}
+
+// No IRQ fires while disabled, and none before the target scanline.
+func TestMMC5_ScanlineIRQGating(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))
+	sink := &mmc5FakeSink{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0x5203, 8)
+	// IRQ NOT enabled: drive past the target, expect no assert.
+	for sl := 0; sl <= 12; sl++ {
+		c.NotifyPPUScanline(sl, true)
+	}
+	if sink.asserts != 0 {
+		t.Errorf("IRQ asserted while disabled: %d", sink.asserts)
+	}
+}
+
 // save / load round-trips the register file + ExRAM + work RAM.
 func TestMMC5_SaveLoadRoundTrip(t *testing.T) {
 	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))

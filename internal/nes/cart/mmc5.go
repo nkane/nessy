@@ -56,12 +56,51 @@ type MMC5 struct {
 	chrBanks       [12]byte // $5120-$512B
 	mult1, mult2   byte
 
-	// IRQ register state (detection is a follow-up phase).
-	irqTarget  byte
-	irqEnabled bool
-	irqPending bool
+	// Scanline IRQ ($5203 target / $5204 enable+status). The in-frame
+	// counter advances once per visible scanline while rendering is on;
+	// IRQ fires when it reaches the target.
+	irqTarget       byte
+	irqEnabled      bool
+	irqPending      bool
+	inFrame         bool
+	scanlineCounter byte
+	irqSink         IRQSink
 
 	exram [0x400]byte // $5C00-$5FFF
+}
+
+// SetIRQSink wires the CPU's named-IRQ surface (shared with MMC3 via the
+// IRQSink interface). MMC5 asserts on the "mmc5" source.
+func (c *MMC5) SetIRQSink(s IRQSink) { c.irqSink = s }
+
+const mmc5IRQSource = "mmc5"
+
+// NotifyPPUScanline advances the MMC5 in-frame scanline counter. The PPU
+// calls it at the start of every scanline with the current rendering
+// state (#55). Real silicon detects the scanline from the PPU's
+// nametable-fetch pattern; nessy's renderer is per-scanline, so we drive
+// the same counter directly off the scanline cursor — the IRQ lands at
+// the start of the target scanline (a dot-granular refinement can follow,
+// like the MMC3 #25 v-update). Visible scanlines (0-239) with rendering
+// enabled tick the counter; post-render / vblank / rendering-off clears
+// the in-frame state.
+func (c *MMC5) NotifyPPUScanline(scanline int, renderingEnabled bool) {
+	if scanline >= 0 && scanline < 240 && renderingEnabled {
+		if !c.inFrame {
+			c.inFrame = true
+			c.scanlineCounter = 0
+			return
+		}
+		c.scanlineCounter++
+		if c.scanlineCounter == c.irqTarget {
+			c.irqPending = true
+			if c.irqEnabled && c.irqSink != nil {
+				c.irqSink.AssertIRQSource(mmc5IRQSource)
+			}
+		}
+		return
+	}
+	c.inFrame = false
 }
 
 // NewMMC5 constructs an MMC5 cart. PRG must be a non-zero multiple of
@@ -101,12 +140,18 @@ func (c *MMC5) CPURead(addr uint16) byte {
 	switch {
 	case addr == 0x5204:
 		// IRQ status: bit 7 = pending, bit 6 = in-frame. Reading clears
-		// the pending flag. (In-frame tracking is a follow-up phase.)
+		// the pending flag + de-asserts the IRQ line.
 		v := byte(0)
 		if c.irqPending {
 			v |= 0x80
 		}
+		if c.inFrame {
+			v |= 0x40
+		}
 		c.irqPending = false
+		if c.irqSink != nil {
+			c.irqSink.ClearIRQSource(mmc5IRQSource)
+		}
 		return v
 	case addr == 0x5205:
 		return byte(uint16(c.mult1) * uint16(c.mult2)) // product low
@@ -159,6 +204,13 @@ func (c *MMC5) CPUWrite(addr uint16, v byte) {
 		c.irqTarget = v
 	case addr == 0x5204:
 		c.irqEnabled = v&0x80 != 0
+		if c.irqSink != nil {
+			if c.irqEnabled && c.irqPending {
+				c.irqSink.AssertIRQSource(mmc5IRQSource)
+			} else if !c.irqEnabled {
+				c.irqSink.ClearIRQSource(mmc5IRQSource)
+			}
+		}
 	case addr == 0x5205:
 		c.mult1 = v
 	case addr == 0x5206:
