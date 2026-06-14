@@ -181,8 +181,21 @@ Built on chippy v1.5.0's host hooks (chippy#419):
   /NMI rising edge), `nessy/clearStep` (disarm). The client arms one,
   sends `continue`, and clears it when the `stopped` event arrives.
 
-Typed read/write/exec breakpoints on PPU memory + MMIO registers are a
-follow-up (they need nessy-side access interception).
+**Typed breakpoints** ([#49](https://github.com/nkane/nessy/issues/49))
+cover the address spaces chippy's CPU-bus breakpoints can't reach:
+
+- `nessy/setMemBreakpoint` `{ space, addr, read, write }` — `space` is
+  `"ppu"` (PPU bus `$0000-$3FFF`: CHR / nametable / palette) or `"reg"`
+  (PPU register `$2000-$2007`). `nessy/clearMemBreakpoints` removes them.
+- A matching access latches a pending stop; `nessy/armBreakpointStop`
+  wires the host stop-predicate to drain it (so the run halts at the
+  next instruction boundary). It shares the predicate slot with the step
+  modes — arm one at a time; `nessy/clearStep` disarms either.
+- Hot-path checks are gated, so an access costs nothing until a
+  breakpoint is set.
+
+run-to-IRQ + breakpoints on the APU / joypad registers (`$4000-$4017`)
+are a follow-up.
 
 ## Live demo
 

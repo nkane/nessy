@@ -75,6 +75,26 @@ const (
 	clearStepCommand    = "nessy/clearStep"
 )
 
+// Typed breakpoint commands (#49) — read/write breakpoints on PPU-bus
+// addresses + PPU registers, which chippy's CPU-bus breakpoints can't
+// reach. A hit latches a pending stop; armBreakpointStop wires the
+// host stop-predicate to drain it (shares the predicate slot with the
+// step modes — arm one at a time; clearStep disarms either).
+const (
+	setMemBreakpointCommand    = "nessy/setMemBreakpoint"
+	clearMemBreakpointsCommand = "nessy/clearMemBreakpoints"
+	armBreakpointStopCommand   = "nessy/armBreakpointStop"
+)
+
+// memBreakpointArgs is the setMemBreakpoint request body. Space is
+// "ppu" (PPU bus $0000-$3FFF) or "reg" (PPU register $2000-$2007).
+type memBreakpointArgs struct {
+	Space string `json:"space"`
+	Addr  uint16 `json:"addr"`
+	Read  bool   `json:"read"`
+	Write bool   `json:"write"`
+}
+
 // Event viewer commands (#31). Recording is opt-in (off by default for
 // zero hot-path cost); eventFrame returns the last completed frame's
 // per-dot event log.
@@ -250,6 +270,26 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server, heatma
 		case clearStepCommand:
 			srv.SetStopPredicate(nil)
 			return map[string]string{"armed": "none"}, true, nil
+		case setMemBreakpointCommand:
+			var a memBreakpointArgs
+			if err := json.Unmarshal(args, &a); err != nil {
+				return nil, true, fmt.Errorf("setMemBreakpoint: bad args: %w", err)
+			}
+			switch a.Space {
+			case "ppu":
+				bus.ppu.SetPPUBusBreakpoint(a.Addr, a.Read, a.Write)
+			case "reg":
+				bus.ppu.SetRegBreakpoint(a.Addr, a.Read, a.Write)
+			default:
+				return nil, true, fmt.Errorf("setMemBreakpoint: unknown space %q (want ppu|reg)", a.Space)
+			}
+			return map[string]any{"space": a.Space, "addr": a.Addr, "read": a.Read, "write": a.Write}, true, nil
+		case clearMemBreakpointsCommand:
+			bus.ppu.ClearBreakpoints()
+			return map[string]bool{"cleared": true}, true, nil
+		case armBreakpointStopCommand:
+			srv.SetStopPredicate(func() bool { return bus.ppu.TakePendingStop() })
+			return map[string]string{"armed": "breakpoint"}, true, nil
 		case heatmapStartCommand:
 			heatmap.start()
 			bus.cpu.SetAccessHook(func(addr uint16, kind cpu.AccessKind) {
