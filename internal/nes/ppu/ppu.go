@@ -95,6 +95,15 @@ type PPU struct {
 	eventsLast   []DebugEvent
 	nmiLevelPrev bool
 
+	// Debug breakpoints (#49). busBP keys PPU-bus addresses, regBP keys
+	// the 8 PPU registers; pendingStop latches a hit until the debugger
+	// drains it. has* gate the hot-path checks.
+	busBP       map[uint16]bpFlags
+	regBP       map[uint16]bpFlags
+	hasBusBP    bool
+	hasRegBP    bool
+	pendingStop bool
+
 	// Latched registers ($2000-$2007).
 	ctrl    byte // $2000 PPUCTRL
 	mask    byte // $2001 PPUMASK
@@ -335,8 +344,10 @@ func (p *PPU) updateNMI() {
 }
 
 func (p *PPU) Read(addr uint16) byte {
-	p.recordEvent(eventRegRead, uint16(0x2000|(addr&0x0007)), 0)
-	switch 0x2000 | (addr & 0x0007) {
+	reg := uint16(0x2000 | (addr & 0x0007))
+	p.recordEvent(eventRegRead, reg, 0)
+	p.checkRegBP(reg, false)
+	switch reg {
 	case 0x2002:
 		// PPUSTATUS: top 3 bits (vblank / sprite-0 / overflow) come
 		// from the live status register; bottom 5 bits come from
@@ -406,6 +417,7 @@ func (p *PPU) Write(addr uint16, v byte) {
 	p.openBus = v
 	reg := uint16(0x2000 | (addr & 0x0007))
 	p.recordEvent(eventRegWrite, reg, v)
+	p.checkRegBP(reg, true)
 	switch reg {
 	case 0x2000:
 		prev := p.ctrl
@@ -1286,6 +1298,76 @@ func (p *PPU) EventFrame() []DebugEvent {
 	out := make([]DebugEvent, len(p.eventsLast))
 	copy(out, p.eventsLast)
 	return out
+}
+
+// bpFlags marks which access kinds break at an address.
+type bpFlags struct{ read, write bool }
+
+// Debug breakpoint state (#49). Two address spaces the chippy CPU
+// debugger can't reach: the PPU bus ($0000-$3FFF — CHR / nametable /
+// palette) and the PPU MMIO registers ($2000-$2007). A matching access
+// sets pendingStop; the debugger's stop-predicate drains it (via
+// TakePendingStop) to halt the run loop at the next instruction
+// boundary. The hasBus/hasReg bools keep the hot path (every fetch)
+// free of a map lookup unless a breakpoint is actually set.
+//
+// (Fields live on PPU; declared here next to the methods.)
+
+// SetPPUBusBreakpoint breaks when the PPU bus address is read/written
+// (#49). addr is masked to the 14-bit PPU bus.
+func (p *PPU) SetPPUBusBreakpoint(addr uint16, read, write bool) {
+	if p.busBP == nil {
+		p.busBP = map[uint16]bpFlags{}
+	}
+	p.busBP[addr&0x3FFF] = bpFlags{read, write}
+	p.hasBusBP = len(p.busBP) > 0
+}
+
+// SetRegBreakpoint breaks when a PPU register ($2000-$2007) is
+// read/written. addr is folded to the 8-register window.
+func (p *PPU) SetRegBreakpoint(addr uint16, read, write bool) {
+	if p.regBP == nil {
+		p.regBP = map[uint16]bpFlags{}
+	}
+	p.regBP[0x2000|(addr&0x0007)] = bpFlags{read, write}
+	p.hasRegBP = len(p.regBP) > 0
+}
+
+// ClearBreakpoints removes all PPU bus + register breakpoints.
+func (p *PPU) ClearBreakpoints() {
+	p.busBP = nil
+	p.regBP = nil
+	p.hasBusBP = false
+	p.hasRegBP = false
+	p.pendingStop = false
+}
+
+// TakePendingStop reports + clears whether a breakpoint has fired since
+// the last call. The debugger arms a stop-predicate around this.
+func (p *PPU) TakePendingStop() bool {
+	s := p.pendingStop
+	p.pendingStop = false
+	return s
+}
+
+// checkBusBP flags a stop if a PPU-bus breakpoint matches the access.
+func (p *PPU) checkBusBP(addr uint16, write bool) {
+	if !p.hasBusBP {
+		return
+	}
+	if bp, ok := p.busBP[addr&0x3FFF]; ok && ((write && bp.write) || (!write && bp.read)) {
+		p.pendingStop = true
+	}
+}
+
+// checkRegBP flags a stop if a register breakpoint matches the access.
+func (p *PPU) checkRegBP(reg uint16, write bool) {
+	if !p.hasRegBP {
+		return
+	}
+	if bp, ok := p.regBP[reg]; ok && ((write && bp.write) || (!write && bp.read)) {
+		p.pendingStop = true
+	}
 }
 
 // RecordDebugEvent records an external event (mapper IRQ, DMC/OAM DMA)

@@ -14,6 +14,7 @@ import "github.com/nkane/nessy/internal/nes"
 // busRead routes a PPU-bus read to the right backing store.
 func (p *PPU) busRead(addr uint16) byte {
 	addr &= 0x3FFF
+	p.checkBusBP(addr, false)
 	switch {
 	case addr < 0x2000:
 		if p.cart != nil {
@@ -30,6 +31,7 @@ func (p *PPU) busRead(addr uint16) byte {
 // busWrite routes a PPU-bus write to the right backing store.
 func (p *PPU) busWrite(addr uint16, v byte) {
 	addr &= 0x3FFF
+	p.checkBusBP(addr, true)
 	switch {
 	case addr < 0x2000:
 		if p.cart != nil {

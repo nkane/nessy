@@ -86,6 +86,57 @@ func TestEventViewer(t *testing.T) {
 	}
 }
 
+// A PPU-bus write breakpoint latches a pending stop only on the matching
+// access; TakePendingStop clears it; ClearBreakpoints disarms.
+func TestBreakpoints_PPUBus(t *testing.T) {
+	p, _, _ := newMMC3PPU(t)
+	p.SetPPUBusBreakpoint(0x2400, false, true) // break on write to $2400
+
+	// Write $2400 via $2006/$2007.
+	p.Write(0x2006, 0x24)
+	p.Write(0x2006, 0x00)
+	p.Write(0x2007, 0x42)
+	if !p.TakePendingStop() {
+		t.Fatal("no pending stop after write to breakpoint address")
+	}
+	if p.TakePendingStop() {
+		t.Error("pending stop not cleared by TakePendingStop")
+	}
+
+	// A read of a different address must not trip the write breakpoint.
+	p.Write(0x2006, 0x28)
+	p.Write(0x2006, 0x00)
+	_ = p.Read(0x2007)
+	if p.TakePendingStop() {
+		t.Error("read of non-breakpoint address tripped a write breakpoint")
+	}
+
+	// After clearing, the write no longer stops.
+	p.ClearBreakpoints()
+	p.Write(0x2006, 0x24)
+	p.Write(0x2006, 0x00)
+	p.Write(0x2007, 0x99)
+	if p.TakePendingStop() {
+		t.Error("breakpoint fired after ClearBreakpoints")
+	}
+}
+
+// A PPU-register breakpoint trips on the matching register access only.
+func TestBreakpoints_Register(t *testing.T) {
+	p, _, _ := newMMC3PPU(t)
+	p.SetRegBreakpoint(0x2000, false, true) // break on $2000 write
+
+	p.Write(0x2000, 0x80)
+	if !p.TakePendingStop() {
+		t.Fatal("no pending stop on $2000 write breakpoint")
+	}
+	// A read of $2002 (no breakpoint) must not trip.
+	_ = p.Read(0x2002)
+	if p.TakePendingStop() {
+		t.Error("unexpected stop on unrelated $2002 read")
+	}
+}
+
 // DecodedRegisters breaks PPUCTRL / PPUMASK into named flags.
 func TestDecodedRegisters(t *testing.T) {
 	p, _, _ := newMMC3PPU(t)

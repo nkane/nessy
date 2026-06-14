@@ -197,6 +197,23 @@ func TestDebugRequestHandler(t *testing.T) {
 		}
 	}
 
+	// typed breakpoint commands → handled.
+	if _, handled, err := h(setMemBreakpointCommand, []byte(`{"space":"ppu","addr":16128,"write":true}`)); err != nil || !handled {
+		t.Fatalf("setMemBreakpoint ppu: handled=%v err=%v", handled, err)
+	}
+	if _, handled, err := h(setMemBreakpointCommand, []byte(`{"space":"reg","addr":8192,"read":true}`)); err != nil || !handled {
+		t.Fatalf("setMemBreakpoint reg: handled=%v err=%v", handled, err)
+	}
+	if _, _, err := h(setMemBreakpointCommand, []byte(`{"space":"bogus","addr":0}`)); err == nil {
+		t.Error("setMemBreakpoint bogus space: err=nil; want error")
+	}
+	if b, handled, err := h(armBreakpointStopCommand, nil); err != nil || !handled || b.(map[string]string)["armed"] != "breakpoint" {
+		t.Fatalf("armBreakpointStop: handled=%v err=%v body=%v", handled, err, b)
+	}
+	if _, handled, err := h(clearMemBreakpointsCommand, nil); err != nil || !handled {
+		t.Fatalf("clearMemBreakpoints: handled=%v err=%v", handled, err)
+	}
+
 	_, handled, err = h("some/unknown", nil)
 	if err != nil {
 		t.Errorf("unknown command: err = %v; want nil", err)
