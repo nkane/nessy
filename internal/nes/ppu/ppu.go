@@ -90,6 +90,15 @@ type scanlineNotifier interface {
 	NotifyPPUScanline(scanline int, renderingEnabled bool)
 }
 
+// chrContext is the optional cart surface for CHR fetch-phase awareness
+// (MMC5 dual CHR banks for 8x16 sprites, #55). Before a CHR-fetch pass
+// the PPU reports whether it's fetching sprite or background patterns
+// and whether 8x16 sprites are active, so the cart picks the A/B bank
+// set. Carts without it ignore fetch phase.
+type chrContext interface {
+	SetCHRContext(spriteFetch, largeSprites bool)
+}
+
 // NMI is the CPU's non-maskable-interrupt line. The PPU drives it as a
 // level via SetNMILine (= vblank-flag AND PPUCTRL.7); the CPU edge-detects
 // it per cycle, which makes the 2C02 NMI-suppression race fall out (#342).
@@ -110,6 +119,7 @@ type PPU struct {
 	chrPeek  chrPeeker        // non-nil iff cart implements PeekCHR (MMC3)
 	ntMap    nametableMapper  // non-nil iff cart maps nametables per-quadrant (MMC5)
 	slNotify scanlineNotifier // non-nil iff cart wants a per-scanline tick (MMC5)
+	chrCtx   chrContext       // non-nil iff cart wants CHR fetch-phase (MMC5 8x16)
 	nmi      NMI
 
 	// Debug event log (#31). eventRec gates capture; events accumulates
@@ -298,6 +308,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	}
 	if sn, ok := cart.(scanlineNotifier); ok {
 		p.slNotify = sn
+	}
+	if cc, ok := cart.(chrContext); ok {
+		p.chrCtx = cc
 	}
 	p.Reset()
 	return p
@@ -1434,6 +1447,15 @@ func (p *PPU) rotateEvents() {
 	}
 	p.eventsLast = p.events
 	p.events = nil
+}
+
+// setCHRContext tells a fetch-phase-aware cart (MMC5) whether the next
+// CHR-fetch pass is for sprites or background, plus the 8x16 sprite-size
+// flag — so it can pick the A/B bank set (#55). No-op for other carts.
+func (p *PPU) setCHRContext(spriteFetch bool) {
+	if p.chrCtx != nil {
+		p.chrCtx.SetCHRContext(spriteFetch, p.ctrl&0x20 != 0)
+	}
 }
 
 // debugCHR reads a CHR byte with no side effects (no A12 clock).

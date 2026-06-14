@@ -77,6 +77,7 @@ func (p *PPU) compositeScanlineSprites(y int) {
 	if p.mask&0x10 == 0 {
 		return
 	}
+	p.setCHRContext(true) // sprite CHR fetches (MMC5 'A' set)
 	spriteH := 8
 	if p.ctrl&0x20 != 0 {
 		spriteH = 16
@@ -168,6 +169,7 @@ func (p *PPU) renderSprites() {
 	if p.mask&0x10 == 0 {
 		return
 	}
+	p.setCHRContext(true) // sprite CHR fetches (MMC5 'A' set)
 
 	spriteH := 8
 	if p.ctrl&0x20 != 0 {

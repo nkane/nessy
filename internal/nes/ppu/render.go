@@ -75,6 +75,7 @@ func (p *PPU) renderScanlineEnabled(y int) {
 // fetch via the cursorTile local. PPU mirroring (cart.Mirroring) is
 // handled inside busRead.
 func (p *PPU) renderScanline(y int, snap scrollSnapshot) {
+	p.setCHRContext(false) // background CHR fetches (MMC5 'B' set in 8x16)
 	patternBase := uint16(0)
 	if p.ctrl&0x10 != 0 {
 		patternBase = 0x1000
