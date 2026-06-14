@@ -159,10 +159,12 @@ A per-dot map of one frame's significant events, located at the
   finishes, so the panel always sees a whole frame).
 
 Each event carries `scanline`, `dot`, `kind`, and (for register events)
-`addr` + `value`. The first cut records the PPU-observable events:
-register writes (`regWrite`), register reads (`regRead`), the NMI line's
-rising edge (`nmi`), and sprite-0 hit (`sprite0`). Mapper IRQ and
-DMC/OAM DMA events need cart/DMA wiring and land in a follow-up.
+`addr` + `value`. Recorded kinds: register writes (`regWrite`), register
+reads (`regRead`), the NMI line's rising edge (`nmi`), sprite-0 hit
+(`sprite0`), mapper scanline IRQ (`mapperIRQ`, e.g. MMC3 A12), the DMC
+sample-fetch DMA (`dmcDMA`), and `$4014` OAM DMA (`oamDMA`). The
+non-PPU sources reach the recorder through a `nes.DebugEventSink` wired
+to the cart / APU / DMA at build time (no-op unless recording is on).
 
 ### Breakpoints + step granularity ([#33](https://github.com/nkane/nessy/issues/33))
 

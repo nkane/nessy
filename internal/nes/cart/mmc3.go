@@ -74,7 +74,8 @@ type MMC3 struct {
 	// mapper 3 selects RevA; default is RevB.
 	revA bool
 
-	irqSink IRQSink
+	irqSink   IRQSink
+	debugSink nes.DebugEventSink
 }
 
 // IRQSink is the cart's view of the CPU's named-source IRQ
@@ -121,6 +122,17 @@ func NewMMC3(rom *nes.ROM) (*MMC3, error) {
 // headless tests — IRQ flag still tracks; just nothing on the CPU
 // line.
 func (c *MMC3) SetIRQSink(s IRQSink) { c.irqSink = s }
+
+// SetDebugSink wires the event-viewer sink so a mapper-IRQ assertion is
+// recorded at the PPU's current scanline/dot (#44). Optional; nil is fine.
+func (c *MMC3) SetDebugSink(s nes.DebugEventSink) { c.debugSink = s }
+
+// recordIRQ stamps a mapper-IRQ event when a debug sink is wired.
+func (c *MMC3) recordIRQ() {
+	if c.debugSink != nil {
+		c.debugSink.RecordDebugEvent(nes.EventMapperIRQ)
+	}
+}
 
 // CPURead serves $6000-$FFFF.
 func (c *MMC3) CPURead(addr uint16) byte {
@@ -321,6 +333,7 @@ func (c *MMC3) clockA12(addr uint16) {
 	}
 	if c.irqCounter == 0 && c.irqEnabled {
 		c.irqPending = true
+		c.recordIRQ()
 		if c.irqSink != nil {
 			c.irqSink.AssertIRQSource(mmc3IRQSource)
 		}
@@ -343,6 +356,7 @@ func (c *MMC3) clockA12RevA() {
 	}
 	if c.irqCounter == 0 && c.irqEnabled && !preReload {
 		c.irqPending = true
+		c.recordIRQ()
 		if c.irqSink != nil {
 			c.irqSink.AssertIRQSource(mmc3IRQSource)
 		}

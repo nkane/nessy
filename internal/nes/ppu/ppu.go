@@ -1288,6 +1288,12 @@ func (p *PPU) EventFrame() []DebugEvent {
 	return out
 }
 
+// RecordDebugEvent records an external event (mapper IRQ, DMC/OAM DMA)
+// at the PPU's current scanline/dot for the event viewer (#44). Gated by
+// the recording flag, so it's a no-op no-cost call when the debugger
+// isn't watching. Satisfies nes.DebugEventSink.
+func (p *PPU) RecordDebugEvent(kind string) { p.recordEvent(kind, 0, 0) }
+
 // recordEvent appends an event at the current cursor when recording.
 func (p *PPU) recordEvent(kind string, addr uint16, val byte) {
 	if !p.eventRec || len(p.events) >= maxEventsPerFrame {

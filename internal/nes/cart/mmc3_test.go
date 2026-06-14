@@ -181,6 +181,38 @@ func TestMMC3_IRQFiresOnUnderflow(t *testing.T) {
 	}
 }
 
+// captureSink records mapper-IRQ debug events.
+type captureSink struct{ kinds []string }
+
+func (s *captureSink) RecordDebugEvent(kind string) { s.kinds = append(s.kinds, kind) }
+
+// A mapper-IRQ assertion records a debug event for the event viewer (#44).
+func TestMMC3_RecordsMapperIRQEvent(t *testing.T) {
+	c, err := NewMMC3(fillMMC3Rom(t, 4, 8))
+	if err != nil {
+		t.Fatalf("NewMMC3: %v", err)
+	}
+	dbg := &captureSink{}
+	c.SetDebugSink(dbg)
+	c.CPUWrite(0xC000, 1) // latch = 1 → fire on first edge after reload
+	c.CPUWrite(0xC001, 0)
+	c.CPUWrite(0xE001, 0) // enable
+	// Drive A12 edges until the counter underflows + fires.
+	for range 4 {
+		c.PPURead(0x0000)
+		c.PPURead(0x1000)
+	}
+	found := false
+	for _, k := range dbg.kinds {
+		if k == nes.EventMapperIRQ {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no %q event recorded; got %v", nes.EventMapperIRQ, dbg.kinds)
+	}
+}
+
 // $E000 disables + clears pending IRQ.
 func TestMMC3_E000DisablesAndAcks(t *testing.T) {
 	c, err := NewMMC3(fillMMC3Rom(t, 4, 8))

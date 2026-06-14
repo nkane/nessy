@@ -137,6 +137,15 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 		return nil, err
 	}
 
+	// Debug event-viewer sinks (#44): the PPU records mapper-IRQ + DMC
+	// /OAM DMA events at its current scanline/dot. No-ops unless a
+	// debugger turns event recording on, so zero cost in normal play.
+	ap.SetDebugSink(pp)
+	oam.SetDebugSink(pp)
+	if m, ok := c.(*cart.MMC3); ok {
+		m.SetDebugSink(pp)
+	}
+
 	// Region timing (NTSC / PAL / Dendy) from the cart's TV-system
 	// hint. NTSC carts (the overwhelming majority + every demo) keep
 	// the default, so their render + audio stay byte-identical.
