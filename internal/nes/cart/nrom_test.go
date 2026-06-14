@@ -140,14 +140,13 @@ func TestOpen_DispatchByMapper(t *testing.T) {
 		t.Errorf("Open should return *NROM; got %T", cart)
 	}
 
-	// Mapper 5 (MMC5) — not yet supported. v0.4 ships NROM / MMC1 /
-	// UxROM / CNROM / MMC3.
-	rom.Mapper = 5
+	// Mapper 99 — not a mapper nessy implements; Open names the number.
+	rom.Mapper = 99
 	_, err = Open(rom)
 	if err == nil {
-		t.Fatalf("MMC5 should return unsupported error")
+		t.Fatalf("mapper 99 should return unsupported error")
 	}
-	if !strings.Contains(err.Error(), "unsupported mapper 5") {
+	if !strings.Contains(err.Error(), "unsupported mapper 99") {
 		t.Errorf("error should name the mapper number; got %q", err.Error())
 	}
 	_ = errors.New // appease the import even if Sentinel arrives later

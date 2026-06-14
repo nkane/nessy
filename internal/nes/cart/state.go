@@ -13,17 +13,42 @@ import (
 // the ROM file at load time. CHR is persisted only for CHR-RAM carts
 // (CHR-ROM is immutable + part of the ROM).
 type CartState struct {
-	Kind  string // "NROM" | "UxROM" | "CNROM" | "MMC1" | "MMC3" | "AOROM" | "FME7" | "VRC" | "VRC6" | "VRC7"
+	Kind  string // "NROM" | "UxROM" | "CNROM" | "MMC1" | "MMC3" | "MMC5" | "AOROM" | "FME7" | "VRC" | "VRC6" | "VRC7"
 	NROM  *NROMState
 	UxROM *UxROMState
 	CNROM *CNROMState
 	MMC1  *MMC1State
 	MMC3  *MMC3State
+	MMC5  *MMC5State
 	AOROM *AOROMState
 	FME7  *FME7State
 	VRC   *VRCState
 	VRC6  *VRC6State
 	VRC7  *VRC7State
+}
+
+// MMC5State captures the MMC5 register file + ExRAM + work RAM. The
+// PPU-integration phases (nametable mapping, scanline IRQ) add their
+// state fields here as they land.
+type MMC5State struct {
+	PrgMode        byte
+	ChrMode        byte
+	PrgRAMProtect1 byte
+	PrgRAMProtect2 byte
+	ExramMode      byte
+	NtMapping      byte
+	FillTile       byte
+	FillColor      byte
+	ChrUpperBits   byte
+	PrgBanks       [5]byte
+	ChrBanks       [12]byte
+	Mult1, Mult2   byte
+	IRQTarget      byte
+	IRQEnabled     bool
+	IRQPending     bool
+	Exram          [0x400]byte
+	PRGRAM         []byte
+	CHRRAM         []byte
 }
 
 // VRC7State — banking + IRQ + PRG-RAM + CHR-RAM (rare). Audio
@@ -170,6 +195,8 @@ func SaveCart(c Cartridge) (CartState, error) {
 		return CartState{Kind: "MMC1", MMC1: m.saveState()}, nil
 	case *MMC3:
 		return CartState{Kind: "MMC3", MMC3: m.saveState()}, nil
+	case *MMC5:
+		return CartState{Kind: "MMC5", MMC5: m.saveState()}, nil
 	case *AOROM:
 		return CartState{Kind: "AOROM", AOROM: m.saveState()}, nil
 	case *FME7:
@@ -215,6 +242,11 @@ func LoadCart(c Cartridge, s CartState) error {
 			return fmt.Errorf("cart: state kind %q doesn't match MMC3 cart", s.Kind)
 		}
 		return m.loadState(*s.MMC3)
+	case *MMC5:
+		if s.Kind != "MMC5" || s.MMC5 == nil {
+			return fmt.Errorf("cart: state kind %q doesn't match MMC5 cart", s.Kind)
+		}
+		return m.loadState(*s.MMC5)
 	case *AOROM:
 		if s.Kind != "AOROM" || s.AOROM == nil {
 			return fmt.Errorf("cart: state kind %q doesn't match AOROM cart", s.Kind)
@@ -581,6 +613,66 @@ func (c *MMC3) loadState(s MMC3State) error {
 	if c.chrIsRAM {
 		if len(s.CHRRAM) != len(c.chr) {
 			return fmt.Errorf("mmc3: CHR-RAM length mismatch (have %d, got %d)", len(c.chr), len(s.CHRRAM))
+		}
+		copy(c.chr, s.CHRRAM)
+	}
+	return nil
+}
+
+// --- MMC5 ---
+
+func (c *MMC5) saveState() *MMC5State {
+	s := &MMC5State{
+		PrgMode:        c.prgMode,
+		ChrMode:        c.chrMode,
+		PrgRAMProtect1: c.prgRAMProtect1,
+		PrgRAMProtect2: c.prgRAMProtect2,
+		ExramMode:      c.exramMode,
+		NtMapping:      c.ntMapping,
+		FillTile:       c.fillTile,
+		FillColor:      c.fillColor,
+		ChrUpperBits:   c.chrUpperBits,
+		PrgBanks:       c.prgBanks,
+		ChrBanks:       c.chrBanks,
+		Mult1:          c.mult1,
+		Mult2:          c.mult2,
+		IRQTarget:      c.irqTarget,
+		IRQEnabled:     c.irqEnabled,
+		IRQPending:     c.irqPending,
+		Exram:          c.exram,
+		PRGRAM:         append([]byte(nil), c.prgRAM...),
+	}
+	if c.chrIsRAM {
+		s.CHRRAM = append(s.CHRRAM, c.chr...)
+	}
+	return s
+}
+
+func (c *MMC5) loadState(s MMC5State) error {
+	if len(s.PRGRAM) != len(c.prgRAM) {
+		return fmt.Errorf("mmc5: PRG-RAM length mismatch (have %d, got %d)", len(c.prgRAM), len(s.PRGRAM))
+	}
+	c.prgMode = s.PrgMode
+	c.chrMode = s.ChrMode
+	c.prgRAMProtect1 = s.PrgRAMProtect1
+	c.prgRAMProtect2 = s.PrgRAMProtect2
+	c.exramMode = s.ExramMode
+	c.ntMapping = s.NtMapping
+	c.fillTile = s.FillTile
+	c.fillColor = s.FillColor
+	c.chrUpperBits = s.ChrUpperBits
+	c.prgBanks = s.PrgBanks
+	c.chrBanks = s.ChrBanks
+	c.mult1 = s.Mult1
+	c.mult2 = s.Mult2
+	c.irqTarget = s.IRQTarget
+	c.irqEnabled = s.IRQEnabled
+	c.irqPending = s.IRQPending
+	c.exram = s.Exram
+	copy(c.prgRAM, s.PRGRAM)
+	if c.chrIsRAM {
+		if len(s.CHRRAM) != len(c.chr) {
+			return fmt.Errorf("mmc5: CHR-RAM length mismatch (have %d, got %d)", len(c.chr), len(s.CHRRAM))
 		}
 		copy(c.chr, s.CHRRAM)
 	}

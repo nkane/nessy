@@ -21,7 +21,7 @@ That single command spawns nessy + dials its DAP listener + opens the TUI in att
 
 ## Mapper coverage
 
-NROM, MMC1, UxROM, CNROM, MMC3 (Sharp + NEC RevA), VRC2, VRC4, VRC6 + audio, VRC7 (cart only; OPLL FM synth in v0.7), FME-7 + Sunsoft 5B audio.
+NROM, MMC1, UxROM, CNROM, MMC3 (Sharp + NEC RevA), VRC2, VRC4, VRC6 + audio, VRC7 (cart only; OPLL FM synth in v0.7), FME-7 + Sunsoft 5B audio. MMC5 is in progress (#6) — CPU-side banking + multiplier + ExRAM land first; nametable/scanline-IRQ/audio rendering follow.
 
 Headliners that now play: Super Mario Bros, Zelda 1, Final Fantasy, Metroid, Castlevania II + III JP, Mega Man 1-6, SMB3, Crisis Force, Gimmick!, Lagrange Point (silent).
 
