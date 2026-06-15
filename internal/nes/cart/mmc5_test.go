@@ -302,6 +302,29 @@ func TestMMC5_ExtendedAttributes(t *testing.T) {
 	}
 }
 
+// $5000-$5015 writes forward to the audio sink; banking registers do not.
+// (captureAudioSink + writeRecord are shared with the VRC6 audio test.)
+func TestMMC5_AudioRouting(t *testing.T) {
+	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))
+	sink := &captureAudioSink{}
+	c.SetAudioSink(sink)
+
+	c.CPUWrite(0x5000, 0x9A) // pulse 1 vol/duty
+	c.CPUWrite(0x5011, 0x40) // PCM
+	c.CPUWrite(0x5015, 0x03) // enable
+	c.CPUWrite(0x5100, 0x03) // PRG mode — NOT audio
+
+	want := []uint16{0x5000, 0x5011, 0x5015}
+	if len(sink.writes) != len(want) {
+		t.Fatalf("audio writes = %d; want %d (%v)", len(sink.writes), len(want), sink.writes)
+	}
+	for i, a := range want {
+		if sink.writes[i].addr != a {
+			t.Errorf("audio write[%d] = $%04X; want $%04X", i, sink.writes[i].addr, a)
+		}
+	}
+}
+
 // save / load round-trips the register file + ExRAM + work RAM.
 func TestMMC5_SaveLoadRoundTrip(t *testing.T) {
 	c, _ := NewMMC5(fillMMC5Rom(t, 8, 8))

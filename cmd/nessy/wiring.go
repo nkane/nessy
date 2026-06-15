@@ -113,6 +113,11 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 		ap.SetVRC6Audio(v6)
 		vrc6.SetAudioSink(v6)
 	}
+	if mmc5, ok := c.(interface{ SetAudioSink(cart.MMC5AudioSink) }); ok {
+		m5 := apu.NewMMC5Audio()
+		ap.SetMMC5Audio(m5)
+		mmc5.SetAudioSink(m5)
+	}
 	// VRC7 (mapper 85) ships an OPLL FM-synth audio expansion. v0.6
 	// captures register writes; full synth is v0.7 work (#315).
 	if vrc7, ok := c.(interface{ SetAudioSink(cart.VRC7AudioSink) }); ok {
