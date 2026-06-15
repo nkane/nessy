@@ -136,11 +136,22 @@ func (p *PPU) renderScanline(y int, snap scrollSnapshot) {
 				uint16(ntX)*0x0400
 			ntAddr := ntBase + uint16(coarseY)*32 + uint16(coarseX)
 			tileIdx := p.busRead(ntAddr)
-			attrAddr := ntBase + 0x03C0 +
-				uint16(coarseY/4)*8 +
-				uint16(coarseX/4)
-			attr := p.busRead(attrAddr)
-			quadrantShift := uint(((coarseY%4)/2)*4 + ((coarseX%4)/2)*2)
+			var paletteSel, low, high byte
+			if p.extAttr != nil && p.extAttr.ExtendedAttributeActive() {
+				// MMC5 extended attributes: the tile's palette + pattern
+				// CHR bank come from ExRAM, not the attribute table /
+				// normal CHR banking (#55).
+				paletteSel, low, high = p.extAttr.ExtAttrTile(ntAddr, tileIdx, uint16(fineY))
+			} else {
+				attrAddr := ntBase + 0x03C0 +
+					uint16(coarseY/4)*8 +
+					uint16(coarseX/4)
+				attr := p.busRead(attrAddr)
+				quadrantShift := uint(((coarseY%4)/2)*4 + ((coarseX%4)/2)*2)
+				paletteSel = (attr >> quadrantShift) & 0x03
+				low = p.busRead(patternBase + uint16(tileIdx)*16 + uint16(fineY))
+				high = p.busRead(patternBase + uint16(tileIdx)*16 + uint16(fineY) + 8)
+			}
 			cur = tileCache{
 				valid:       true,
 				coarseX:     coarseX,
@@ -148,9 +159,9 @@ func (p *PPU) renderScanline(y int, snap scrollSnapshot) {
 				nametableX:  ntX,
 				nametableY:  ntY,
 				fineY:       fineY,
-				paletteSel:  (attr >> quadrantShift) & 0x03,
-				patternLow:  p.busRead(patternBase + uint16(tileIdx)*16 + uint16(fineY)),
-				patternHigh: p.busRead(patternBase + uint16(tileIdx)*16 + uint16(fineY) + 8),
+				paletteSel:  paletteSel,
+				patternLow:  low,
+				patternHigh: high,
 			}
 		}
 

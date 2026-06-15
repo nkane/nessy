@@ -438,6 +438,25 @@ func (c *MMC5) WriteNametable(addr uint16, v byte) {
 	}
 }
 
+// ExtendedAttributeActive reports MMC5 extended-attribute mode (ExRAM
+// mode 1): each background tile draws its palette + CHR bank from ExRAM.
+func (c *MMC5) ExtendedAttributeActive() bool { return c.exramMode == 1 }
+
+// ExtAttrTile returns the extended-attribute palette + pattern bytes for
+// the background tile whose nametable byte is at ntAddr. The ExRAM byte
+// at the matching offset supplies bits 6-7 = palette and bits 0-5 = the
+// 4 KiB CHR bank (extended by the $5130 upper bits); the tile's pattern
+// is fetched from that bank (the $2000 BG-pattern select is ignored).
+func (c *MMC5) ExtAttrTile(ntAddr uint16, tileIdx byte, fineY uint16) (palette, low, high byte) {
+	ex := c.exram[ntAddr&0x03FF]
+	palette = ex >> 6
+	bank4k := (int(c.chrUpperBits) << 6) | int(ex&0x3F)
+	base := bank4k*0x1000 + int(tileIdx)*16 + int(fineY)
+	low = c.chr[base%len(c.chr)]
+	high = c.chr[(base+8)%len(c.chr)]
+	return palette, low, high
+}
+
 func (c *MMC5) BatteryBacked() bool { return c.battery }
 
 // PRGRAM exposes the first 8 KiB work-RAM bank for save / restore — the
