@@ -148,6 +148,47 @@ straddle the two:
   3-PPU-cycle deferred $2006 v-update Mesen models in `UpdateState`
   (#25) — NOT yet implemented (nessy applies `v` immediately).
 
+### #25 — mmc3_test 4/6: deferred-v + per-dot A12 (scoped, NOT done)
+
+Researched against Mesen2 (`~/dev/Mesen2`); captured here so the next
+attempt doesn't re-derive it. The two remaining mmc3_test sub-tests
+need DIFFERENT things:
+
+- **mmc3_test 6 (MMC6 #3) — deferred $2006/$2007 v-update.** Mesen
+  `Core/NES/NesPpu.cpp::UpdateState` defers the $2006 second-write
+  commit by **3 PPU cycles** (`_updateVramAddrDelay=3`, `_updateVramAddr=t`):
+  3 cycles later it sets `v=_updateVramAddr`, copies `v`→`t`, and (only
+  when `_scanline>=240 || !rendering`) calls `SetBusAddress` → the MMC3
+  A12 clock. $2007 defers its increment by **1 PPU cycle**
+  (`_needVideoRamIncrement` → `UpdateVideoRamAddr`). nessy commits `v`
+  immediately in `ppu.Write`/`incVRAMAddr`.
+
+- **mmc3_test 4 (scanline_timing #3) — per-dot fetch A12.** "Scanline 0
+  IRQ should occur sooner when $2000=$08" depends on the EXACT dot the
+  A12 line rises during the render fetch pipeline. Mesen clocks A12 from
+  `SetBusAddress` at every BG/sprite fetch dot (`NesPpu.cpp` ~1408/1414/
+  1438/1489).
+
+**The nessy wrinkle (why this is risky, not a clean port):** nessy is a
+HYBRID renderer, not per-dot like Mesen. Pixels batch-render at vblank
+entry (`render.go::renderFrame`) by replaying a per-scanline scroll-event
+log (`recordScrollChange`, fired at $2006-write time); A12 during render
+is faked by a SINGLE dummy `busRead(0x1000)` at dot 260 per scanline
+(`ppu.go`, "#352"). So:
+  - Deferred-v must also defer `recordScrollChange` to the commit dot, or
+    `v` and the scroll log diverge → `scroll-split` / `mmc3-split` demo
+    SHAs shift.
+  - Fixing test 4 means replacing the dot-260 dummy with a real per-dot
+    fetch-address sequence (emit the A12 edge at each fetch dot), without
+    changing the net per-scanline edge that mmc3_test 1/2/3/5 + the
+    `a12_test` already rely on.
+  - Both touch the `ppu_vbl_nmi` HARD GATE + the scroll demos.
+
+Verdict: high-risk PPU-timing surgery for 2 knownFail sub-tests. If
+attempted, gate strictly on the full accuracy suite + every demo SHA and
+revert on any regression. Deferred-v (test 6) is the bounded half;
+per-dot fetch A12 (test 4) is the deep half.
+
 ## Accuracy harness
 
 Live tracker: [#1](https://github.com/nkane/nessy/issues/1). Wire ROMs
