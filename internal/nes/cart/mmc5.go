@@ -72,8 +72,19 @@ type MMC5 struct {
 	spriteFetch  bool
 	largeSprites bool
 
+	audioSink MMC5AudioSink // expansion audio chip ($5000-$5015), optional
+
 	exram [0x400]byte // $5C00-$5FFF
 }
+
+// MMC5AudioSink is what the cart forwards $5000-$5015 audio-register
+// writes to. apu.MMC5Audio satisfies it (#56).
+type MMC5AudioSink interface {
+	Write(addr uint16, val byte)
+}
+
+// SetAudioSink wires the MMC5 audio chip (optional; nil = silent).
+func (c *MMC5) SetAudioSink(s MMC5AudioSink) { c.audioSink = s }
 
 // SetIRQSink wires the CPU's named-IRQ surface (shared with MMC3 via the
 // IRQSink interface). MMC5 asserts on the "mmc5" source.
@@ -184,6 +195,12 @@ func (c *MMC5) CPURead(addr uint16) byte {
 // CPUWrite handles the register file, ExRAM, and PRG-RAM.
 func (c *MMC5) CPUWrite(addr uint16, v byte) {
 	switch {
+	case addr >= 0x5000 && addr <= 0x5015:
+		// Expansion audio (2 pulse + PCM). Forwarded to the audio chip
+		// when one is wired (#56).
+		if c.audioSink != nil {
+			c.audioSink.Write(addr, v)
+		}
 	case addr == 0x5100:
 		c.prgMode = v & 0x03
 	case addr == 0x5101:

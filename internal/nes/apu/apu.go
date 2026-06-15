@@ -151,6 +151,10 @@ type APU struct {
 	// Konami's VRC7 cart (mapper 85) — 6-channel 2-op FM (#315).
 	vrc7Audio *VRC7Audio
 
+	// mmc5Audio (optional) is the 2-pulse + PCM expansion on Nintendo's
+	// MMC5 cart (mapper 5). Same pattern as vrc6Audio (#56).
+	mmc5Audio *MMC5Audio
+
 	// irqSink (optional) is the CPU's IRQ line. nil means
 	// "headless" — registers still track the IRQ flag but nothing
 	// is asserted on the CPU. cmd/nessy wires this via SetIRQSink
@@ -303,6 +307,9 @@ func (a *APU) Sunsoft5B() *Sunsoft5B { return a.sunsoft5b }
 
 // SetVRC6Audio wires the VRC6 audio expansion (3-channel).
 func (a *APU) SetVRC6Audio(v *VRC6Audio) { a.vrc6Audio = v }
+
+// SetMMC5Audio wires the MMC5 audio expansion (2 pulse + PCM).
+func (a *APU) SetMMC5Audio(m *MMC5Audio) { a.mmc5Audio = m }
 
 // VRC6Audio returns the active chip pointer (or nil).
 func (a *APU) VRC6Audio() *VRC6Audio { return a.vrc6Audio }
@@ -599,6 +606,9 @@ func (a *APU) stepCPU() {
 	if a.vrc6Audio != nil {
 		a.vrc6Audio.Step()
 	}
+	if a.mmc5Audio != nil {
+		a.mmc5Audio.Step()
+	}
 
 	// Sample emission. cyclesPerSample is fractional (40.585...);
 	// accumulate in units of 1e6 to avoid drift over long horizons.
@@ -754,6 +764,11 @@ func (a *APU) emitSample() {
 	// VRC6 expansion mix-in. Output range 0..61; scale similarly.
 	if a.vrc6Audio != nil {
 		sample += int16(a.vrc6Audio.Output() * 150)
+	}
+	// MMC5 expansion mix-in (2 pulse + PCM). Output range ~0..61; scale
+	// like the VRC6 pulses.
+	if a.mmc5Audio != nil {
+		sample += int16(a.mmc5Audio.Output() * 150)
 	}
 	// VRC7 OPLL mix-in (#315). Output() advances the FM synth one
 	// sample + returns the summed carrier output (already scaled).
