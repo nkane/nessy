@@ -141,6 +141,21 @@ type PPU struct {
 	eventsLast   []DebugEvent
 	nmiLevelPrev bool
 
+	// Per-dot background renderer (#74, behind perDotBG). The classic
+	// 2C02 fetch pipeline: 8-dot tile fetch feeding 16-bit pattern +
+	// attribute shift registers, one pixel composited per dot. Gated by
+	// the flag so the batched renderFrame stays the default until the
+	// per-dot path is validated SHA-for-SHA (epic #73).
+	perDotBG      bool
+	bgShiftLo     uint16
+	bgShiftHi     uint16
+	bgAttrShiftLo uint16
+	bgAttrShiftHi uint16
+	bgNTLatch     byte // tile index fetched this cycle
+	bgAttrLatch   byte // 2-bit palette for the tile entering the shifters
+	bgPatLoLatch  byte
+	bgPatHiLatch  byte
+
 	// Debug breakpoints (#49). busBP keys PPU-bus addresses, regBP keys
 	// the 8 PPU registers; pendingStop latches a hit until the debugger
 	// drains it. has* gate the hot-path checks.
@@ -928,7 +943,12 @@ func (p *PPU) stepDot() {
 	// during which scanlines had BG but no sprites yet, causing
 	// visible flicker / "sprites erased by scanline" reports.
 	if p.dot == 256 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		p.renderScanlineEnabled(p.scanline)
+		// Per-dot BG (#74) already painted this scanline's background
+		// across dots 1-256; only the sprite layer is composited here.
+		// The batched path draws BG then sprites.
+		if !p.perDotBG {
+			p.renderScanlineEnabled(p.scanline)
+		}
 		p.compositeScanlineSprites(p.scanline)
 	}
 	// Per-scanline A12 clock (#352, unblocks #323). Real silicon does
@@ -941,15 +961,17 @@ func (p *PPU) stepDot() {
 	// the common BG=$0000 / sprite=$1000 config). The value is
 	// discarded + the framebuffer is untouched — demo SHAs hold; the
 	// only effect is the cart's A12 edge detector (e.g. MMC3) ticking.
-	if p.dot == 260 && p.renderingEnabled() &&
+	if !p.perDotBG && p.dot == 260 && p.renderingEnabled() &&
 		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
 		_ = p.busRead(0x1000)
 	}
 	// Loopy v register increments per nesdev's PPU timing diagram
 	// (issue #268 stage 3). Only fire when rendering is on. Visible
 	// scanlines + pre-render scanline run the same fetch state
-	// machine; vblank scanlines do nothing.
-	if p.renderingEnabled() &&
+	// machine; vblank scanlines do nothing. The per-dot BG path (#74)
+	// owns the fetch + increments itself, so this batched schedule is
+	// skipped when that flag is on.
+	if !p.perDotBG && p.renderingEnabled() &&
 		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
 		switch {
 		case p.dot >= 1 && p.dot <= 256 && p.dot%8 == 0:
@@ -973,6 +995,12 @@ func (p *PPU) stepDot() {
 			// idempotent so a single copy at this range suffices.
 			p.copyYFromT()
 		}
+	}
+	// Per-dot BG pipeline (#74): owns fetch + shifters + pixel output +
+	// the v-increment schedule for visible + pre-render scanlines.
+	if p.perDotBG && p.renderingEnabled() &&
+		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
+		p.bgTick()
 	}
 	switch {
 	case p.scanline == p.timing.VBlankScanline && p.dot == 1:
