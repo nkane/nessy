@@ -71,6 +71,31 @@ func setupBGScreen(perDot bool) *ppu.PPU {
 	return p
 }
 
+// With the per-dot path the MMC3 scanline IRQ is driven by the REAL
+// per-dot fetches (BG at $0xxx, sprite/garbage fetches at $1xxx) — not
+// the dot-260 dummy — so it still fires per scanline (#76).
+func TestPerDotA12_MMC3ScanlineIRQ(t *testing.T) {
+	p, c, sink := newMMC3PPU(t)
+	p.SetPerDotBG(true)
+	c.CPUWrite(0xC000, 8) // latch = 8
+	c.CPUWrite(0xC001, 0) // reload
+	c.CPUWrite(0xE001, 0) // enable
+	p.Write(0x2000, 0x08) // BG pattern $0000, sprite pattern $1000
+	p.Write(0x2001, 0x08) // show BG (rendering enabled)
+
+	for range nes.NTSC.DotsPerScanline * nes.NTSC.ScanlinesPerFrame {
+		before := sink.asserts
+		p.Tick(1)
+		if sink.asserts > before {
+			c.CPUWrite(0xE000, 0) // ack
+			c.CPUWrite(0xE001, 0) // re-enable
+		}
+	}
+	if sink.asserts < 20 {
+		t.Errorf("per-dot MMC3 scanline IRQ fired %d times; want >= 20 (real-fetch A12)", sink.asserts)
+	}
+}
+
 // The per-dot BG renderer produces a byte-identical frame to the batched
 // renderer on a static (scroll-0, no mid-frame writes) screen — the
 // phase-1 acceptance gate (#74).

@@ -42,6 +42,17 @@ func (p *PPU) bgTick() {
 
 	case d == 257:
 		p.copyXFromT()
+		// Sprite eval + fetch for the NEXT scanline happens in the
+		// 257-320 window on real silicon; doing it here drives A12 from
+		// the real sprite-pattern fetches (#76). Pre-render (no visible
+		// next line of its own) prepares line 0.
+		next := p.scanline + 1
+		if p.scanline == p.timing.PreRenderScanline {
+			next = 0
+		}
+		if next < ScreenHeight {
+			p.prepareSpritesFor(next)
+		}
 
 	case d >= 321 && d <= 336:
 		// Prefetch the next scanline's first two tiles. No per-dot shift
@@ -91,14 +102,13 @@ type spriteUnit struct {
 	isZero   bool // OAM index 0 (drives sprite-0 hit)
 }
 
-// buildPerDotSprites evaluates the up-to-8 sprites in range on scanline
-// y (OAM order, the 2C02 8-sprite limit) and fetches their pattern bytes
-// — the per-dot analogue of the batched compositeScanlineSprites eval.
-func (p *PPU) buildPerDotSprites(y int) {
+// prepareSpritesFor evaluates the up-to-8 sprites in range on the given
+// display line (OAM order, the 2C02 8-sprite limit) and fetches their
+// pattern bytes. Run during dots 257-320 of the PREVIOUS scanline — the
+// real sprite-fetch window — so the CHR reads drive the cart's A12 line
+// at the correct dot (#76); the fetched units are displayed next line.
+func (p *PPU) prepareSpritesFor(line int) {
 	p.sprCount = 0
-	if p.mask&0x10 == 0 {
-		return
-	}
 	p.setCHRContext(true)
 	spriteH := 8
 	if p.ctrl&0x20 != 0 {
@@ -108,15 +118,28 @@ func (p *PPU) buildPerDotSprites(y int) {
 	if p.ctrl&0x08 != 0 && p.ctrl&0x20 == 0 {
 		sprPatternBase = 0x1000
 	}
+	// Garbage sprite fetches fill the unused slots on real silicon, so
+	// the sprite pattern table is read (A12 toggled) every scanline even
+	// with no sprites in range — which is what drives the MMC3/MMC5
+	// scanline IRQ (#76). Reproduce that by reading sprPatternBase for
+	// each slot not filled by a real sprite.
+	defer func() {
+		for s := p.sprCount; s < 8; s++ {
+			_ = p.busRead(sprPatternBase)
+		}
+	}()
+	if p.mask&0x10 == 0 {
+		return // sprites hidden: only the garbage A12 fetches run
+	}
 	for i := 0; i < 64 && p.sprCount < 8; i++ {
 		spriteY := int(p.oam[i*4+0]) + 1
-		if y < spriteY || y >= spriteY+spriteH {
+		if line < spriteY || line >= spriteY+spriteH {
 			continue
 		}
 		tileIdx := p.oam[i*4+1]
 		attr := p.oam[i*4+2]
 		vflip := attr&0x80 != 0
-		fineY := y - spriteY
+		fineY := line - spriteY
 		if vflip {
 			fineY = spriteH - 1 - fineY
 		}
