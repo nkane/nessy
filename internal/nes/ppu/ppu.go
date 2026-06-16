@@ -936,14 +936,8 @@ func (p *PPU) stepDot() {
 	// (which runs from the just-emitted vblank/end-of-prev-scanline
 	// NMI / opcodes) sees the flag in time for the mid-frame scroll
 	// write.
-	if p.dot == 1 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		if p.perDotBG {
-			// Per-dot path (#75): evaluate this scanline's in-range
-			// sprites; the mux + sprite-0 hit run per visible dot.
-			p.buildPerDotSprites(p.scanline)
-		} else {
-			p.checkSprite0HitForScanline(p.scanline)
-		}
+	if !p.perDotBG && p.dot == 1 && p.scanline >= 0 && p.scanline < ScreenHeight {
+		p.checkSprite0HitForScanline(p.scanline)
 	}
 	// Per-scanline BG render + sprite composite (issue #268). Each
 	// visible scanline rasterizes at dot 256: BG first, then
