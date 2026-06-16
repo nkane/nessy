@@ -33,6 +33,7 @@ func (p *PPU) bgTick() {
 		// Draw THEN shift (Mesen ProcessScanlineImpl order).
 		if visible {
 			p.renderBGPixel(d - 1)
+			p.renderSpritePixel(d - 1)
 		}
 		p.bgShiftLo <<= 1
 		p.bgShiftHi <<= 1
@@ -75,6 +76,113 @@ func (p *PPU) bgLoadTileInfo() {
 		p.bgFetchPatLo()
 	case 7:
 		p.bgFetchPatHi()
+	}
+}
+
+// spriteUnit is one in-range sprite prepared for a scanline's per-dot
+// sprite multiplexer.
+type spriteUnit struct {
+	x        int
+	low      byte
+	high     byte
+	palette  byte
+	behindBG bool
+	hflip    bool
+	isZero   bool // OAM index 0 (drives sprite-0 hit)
+}
+
+// buildPerDotSprites evaluates the up-to-8 sprites in range on scanline
+// y (OAM order, the 2C02 8-sprite limit) and fetches their pattern bytes
+// — the per-dot analogue of the batched compositeScanlineSprites eval.
+func (p *PPU) buildPerDotSprites(y int) {
+	p.sprCount = 0
+	if p.mask&0x10 == 0 {
+		return
+	}
+	p.setCHRContext(true)
+	spriteH := 8
+	if p.ctrl&0x20 != 0 {
+		spriteH = 16
+	}
+	sprPatternBase := uint16(0)
+	if p.ctrl&0x08 != 0 && p.ctrl&0x20 == 0 {
+		sprPatternBase = 0x1000
+	}
+	for i := 0; i < 64 && p.sprCount < 8; i++ {
+		spriteY := int(p.oam[i*4+0]) + 1
+		if y < spriteY || y >= spriteY+spriteH {
+			continue
+		}
+		tileIdx := p.oam[i*4+1]
+		attr := p.oam[i*4+2]
+		vflip := attr&0x80 != 0
+		fineY := y - spriteY
+		if vflip {
+			fineY = spriteH - 1 - fineY
+		}
+		var tileAddr uint16
+		if spriteH == 16 {
+			base := uint16(0)
+			if tileIdx&1 != 0 {
+				base = 0x1000
+			}
+			tileNum := uint16(tileIdx & 0xFE)
+			if fineY >= 8 {
+				tileNum |= 1
+			}
+			tileAddr = base + tileNum*16 + uint16(fineY&7)
+		} else {
+			tileAddr = sprPatternBase + uint16(tileIdx)*16 + uint16(fineY)
+		}
+		p.sprUnits[p.sprCount] = spriteUnit{
+			x:        int(p.oam[i*4+3]),
+			low:      p.busRead(tileAddr),
+			high:     p.busRead(tileAddr + 8),
+			palette:  attr & 0x03,
+			behindBG: attr&0x20 != 0,
+			hflip:    attr&0x40 != 0,
+			isZero:   i == 0,
+		}
+		p.sprCount++
+	}
+}
+
+// renderSpritePixel composites the winning sprite pixel at column x over
+// the BG pixel already drawn this dot, and latches the sprite-0 hit.
+// First non-transparent sprite in OAM order wins; matches the batched
+// compositeScanlineSprites + checkSprite0HitForScanline semantics.
+func (p *PPU) renderSpritePixel(x int) {
+	canHit := p.mask&0x08 != 0 && p.mask&0x10 != 0
+	bgHere := p.bgOpaque[p.scanline*ScreenWidth+x]
+	for i := 0; i < p.sprCount; i++ {
+		s := &p.sprUnits[i]
+		col := x - s.x
+		if col < 0 || col >= 8 {
+			continue
+		}
+		bit := uint(col)
+		if !s.hflip {
+			bit = uint(7 - col)
+		}
+		val := ((s.high>>bit)&1)<<1 | ((s.low >> bit) & 1)
+		if val == 0 {
+			continue
+		}
+		// Sprite-0 hit: opaque sprite-0 pixel over opaque BG (x != 255).
+		if s.isZero && canHit && bgHere && x != 255 {
+			p.status |= 0x40
+		}
+		// First opaque sprite owns this pixel; priority decides drawing.
+		if !s.behindBG || !bgHere {
+			colorIdx := p.palette[0x10|(s.palette<<2)|val]
+			r, g, b := paletteRGB(colorIdx)
+			off := (p.scanline*ScreenWidth + x) * 4
+			p.frame[off+0] = r
+			p.frame[off+1] = g
+			p.frame[off+2] = b
+			p.frame[off+3] = 0xFF
+		}
+		return
 	}
 }
 

@@ -156,6 +156,11 @@ type PPU struct {
 	bgPatLoLatch  byte
 	bgPatHiLatch  byte
 
+	// Per-dot sprite units for the current scanline (#75): the up-to-8
+	// in-range sprites (OAM order) the per-dot mux composites.
+	sprUnits [8]spriteUnit
+	sprCount int
+
 	// Debug breakpoints (#49). busBP keys PPU-bus addresses, regBP keys
 	// the 8 PPU registers; pendingStop latches a hit until the debugger
 	// drains it. has* gate the hot-path checks.
@@ -932,7 +937,13 @@ func (p *PPU) stepDot() {
 	// NMI / opcodes) sees the flag in time for the mid-frame scroll
 	// write.
 	if p.dot == 1 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		p.checkSprite0HitForScanline(p.scanline)
+		if p.perDotBG {
+			// Per-dot path (#75): evaluate this scanline's in-range
+			// sprites; the mux + sprite-0 hit run per visible dot.
+			p.buildPerDotSprites(p.scanline)
+		} else {
+			p.checkSprite0HitForScanline(p.scanline)
+		}
 	}
 	// Per-scanline BG render + sprite composite (issue #268). Each
 	// visible scanline rasterizes at dot 256: BG first, then
@@ -943,13 +954,12 @@ func (p *PPU) stepDot() {
 	// during which scanlines had BG but no sprites yet, causing
 	// visible flicker / "sprites erased by scanline" reports.
 	if p.dot == 256 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		// Per-dot BG (#74) already painted this scanline's background
-		// across dots 1-256; only the sprite layer is composited here.
-		// The batched path draws BG then sprites.
+		// Per-dot path (#74/#75) paints BG + sprites across dots 1-256;
+		// the batched path draws BG then sprites here at dot 256.
 		if !p.perDotBG {
 			p.renderScanlineEnabled(p.scanline)
+			p.compositeScanlineSprites(p.scanline)
 		}
-		p.compositeScanlineSprites(p.scanline)
 	}
 	// Per-scanline A12 clock (#352, unblocks #323). Real silicon does
 	// sprite-pattern fetches every scanline during hblank (dots

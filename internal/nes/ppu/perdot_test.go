@@ -52,11 +52,22 @@ func setupBGScreen(perDot bool) *ppu.PPU {
 	for i := 0; i < 0x40; i++ {
 		p.Write(0x2007, byte(i*0x1B)) // attribute table
 	}
-	// $2000: base NT 0, BG pattern table $0000. $2005: scroll 0,0.
+	// Sprites: 6 sprites on distinct rows (≤1 per scanline, so well under
+	// the 8-per-line limit → the per-dot 8-sprite path must still match
+	// the batched all-sprites path byte-for-byte). Varied tile, attr, x.
+	p.Write(0x2003, 0x00)
+	for i := 0; i < 6; i++ {
+		p.Write(0x2004, byte(20+i*30))       // Y
+		p.Write(0x2004, byte(3+i))           // tile
+		p.Write(0x2004, byte((i*0x41)&0xE3)) // attr (palette + flips + priority)
+		p.Write(0x2004, byte(16+i*24))       // X
+	}
+
+	// $2000: base NT 0, BG + sprite pattern tables $0000. $2005: scroll 0.
 	p.Write(0x2000, 0x00)
 	p.Write(0x2005, 0x00)
 	p.Write(0x2005, 0x00)
-	p.Write(0x2001, 0x08) // show BG
+	p.Write(0x2001, 0x18) // show BG + sprites
 	return p
 }
 
@@ -64,17 +75,21 @@ func setupBGScreen(perDot bool) *ppu.PPU {
 // renderer on a static (scroll-0, no mid-frame writes) screen — the
 // phase-1 acceptance gate (#74).
 func TestPerDotBG_MatchesBatched(t *testing.T) {
-	frame := func(perDot bool) []byte {
+	frame := func(perDot bool) ([]byte, byte) {
 		p := setupBGScreen(perDot)
 		// Step two full frames so the pipeline is primed + a clean frame
 		// is published.
 		for range 2 * nes.NTSC.DotsPerScanline * nes.NTSC.ScanlinesPerFrame {
 			p.Tick(1)
 		}
-		return p.FrameBuffer()
+		return p.FrameBuffer(), p.Status() & 0x40 // bit 6 = sprite-0 hit
 	}
-	batched := frame(false)
-	perDot := frame(true)
+	batched, batchedS0 := frame(false)
+	perDot, perDotS0 := frame(true)
+
+	if batchedS0 != perDotS0 {
+		t.Errorf("sprite-0 hit differs: batched=$%02X per-dot=$%02X", batchedS0, perDotS0)
+	}
 
 	if len(batched) != len(perDot) {
 		t.Fatalf("frame sizes differ: batched %d, per-dot %d", len(batched), len(perDot))
