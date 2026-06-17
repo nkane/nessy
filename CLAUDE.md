@@ -136,58 +136,64 @@ straddle the two:
   bytes pending (Mesen `StartDmcTransfer` condition). Inits with
   `bufferEmpty=true, silenced=true`.
 
-- **MMC3 A12 clocks on PPUADDR, not just CHR fetches** (#16). The PPU
-  drives the VRAM address onto the bus — and clocks `MMC3.clockA12` via
-  the optional `vramAddrHook` (`NotifyVRAMAddr`) — on the $2006 second
-  write AND the non-rendering $2007 auto-increment, both gated on
-  `!renderingEnabled()` (during rendering the fetch pipeline owns A12).
-  Mirrors Mesen `NesPpu::SetBusAddress` → `NotifyVramAddressChange`.
-  CHR fetches still clock through `PPURead`/`PPUWrite`; both share
-  MMC3's `prevA12` edge state so a single rise can't double-count.
-  Closes mmc3_test 1/2/3/5. The remaining 4/6 sub-tests need the
-  3-PPU-cycle deferred $2006 v-update Mesen models in `UpdateState`
-  (#25) — NOT yet implemented (nessy applies `v` immediately).
+- **Per-dot rendering is the SOLE path** (epic #73, phase 4 #77). The
+  PPU reproduces the 2C02 fetch pipeline one dot at a time (`perdot.go`):
+  8-dot tile fetch → 16-bit shift registers, draw-then-shift, the 321-336
+  prefetch, sprite eval+fetch in the 257-320 window, dot-exact sprite-0
+  hit, and the buggy sprite-overflow flag (`evaluateSpriteOverflow`,
+  called from `prepareSpritesFor`). The batched `renderFrame` /
+  `renderScanline` / `compositeScanlineSprites` walk + the scroll-event
+  log (`scrollEvents` / `recordScrollChange` / `frameStartScroll`) are
+  GONE — scroll falls out of `v`/`x` per dot. MMC5 extended attributes +
+  CHR-bank context (`setCHRContext`) are handled inside the per-dot BG
+  fetch; rendering-disabled visible dots paint the backdrop
+  (`renderBackdropPixel`).
 
-### #25 — mmc3_test 4/6: deferred-v + per-dot A12 (scoped, NOT done)
+- **MMC3 A12 clocks from REAL per-dot fetch addresses** (#16, #76). With
+  per-dot rendering, A12 follows the actual fetch bus: BG fetches at
+  `$0xxx`, sprite + garbage fetches at `$1xxx` (the empty sprite slots
+  still read `sprPatternBase` every scanline, so A12 toggles even with no
+  sprites in range). `prepareSpritesFor` runs on EVERY rendering scanline
+  including line 239 (its fetches target the off-screen "line 240") so
+  A12 clocks all 241 rendering scanlines. Off-render, the PPU still drives
+  `v` onto the bus via `NotifyVRAMAddr` on the $2006 second write + the
+  non-rendering $2007 increment (Blargg mmc3_test 1/3).
+- **MMC3 A12 low-time filter** (Mesen `A12Watcher`, `minDelay=10` PPU
+  dots). A rising edge only clocks the IRQ counter once A12 has stayed
+  low for >10 dots — without it the per-dot pattern fetches (A12 high on
+  every `$1xxx` fetch, low only for the NT/AT reads between) would
+  over-clock the counter ~32×/scanline. The PPU pushes its running dot
+  count (`p.dots`) to `MMC3.SetA12Cycle` before each CHR fetch +
+  PPUADDR-driven bus change (optional `a12Cycler` interface); `clockA12`
+  accumulates the low stretch. Net: exactly **241 A12 clocks/frame**
+  (mmc3_test 2 "details" #7). Closes mmc3_test 1/2/3/5. The remaining 4/6
+  need the deferred $2006 v-update (#25) — see below.
+
+### #25 — mmc3_test 4/6: deferred $2006/$2007 v-update (scoped, NOT done)
 
 Researched against Mesen2 (`~/dev/Mesen2`); captured here so the next
-attempt doesn't re-derive it. The two remaining mmc3_test sub-tests
-need DIFFERENT things:
+attempt doesn't re-derive it. The per-dot migration (#73) closed the
+"per-dot fetch A12" half — A12 now rises at the real fetch dots, so
+test 4's failing check shifted from #3 ("sooner") to #2 ("later"). What
+remains for BOTH 4 and 6 is the deferred v-commit:
 
-- **mmc3_test 6 (MMC6 #3) — deferred $2006/$2007 v-update.** Mesen
+- **Deferred $2006/$2007 v-update.** Mesen
   `Core/NES/NesPpu.cpp::UpdateState` defers the $2006 second-write
   commit by **3 PPU cycles** (`_updateVramAddrDelay=3`, `_updateVramAddr=t`):
   3 cycles later it sets `v=_updateVramAddr`, copies `v`→`t`, and (only
   when `_scanline>=240 || !rendering`) calls `SetBusAddress` → the MMC3
   A12 clock. $2007 defers its increment by **1 PPU cycle**
   (`_needVideoRamIncrement` → `UpdateVideoRamAddr`). nessy commits `v`
-  immediately in `ppu.Write`/`incVRAMAddr`.
+  immediately in `ppu.Write`/`incVRAMAddr`. The deferred commit shifts
+  the exact dot the post-$2006 A12 edge lands on, which is what
+  scanline_timing #2 (test 4) + MMC6 #3 (test 6) pin.
 
-- **mmc3_test 4 (scanline_timing #3) — per-dot fetch A12.** "Scanline 0
-  IRQ should occur sooner when $2000=$08" depends on the EXACT dot the
-  A12 line rises during the render fetch pipeline. Mesen clocks A12 from
-  `SetBusAddress` at every BG/sprite fetch dot (`NesPpu.cpp` ~1408/1414/
-  1438/1489).
-
-**The nessy wrinkle (why this is risky, not a clean port):** nessy is a
-HYBRID renderer, not per-dot like Mesen. Pixels batch-render at vblank
-entry (`render.go::renderFrame`) by replaying a per-scanline scroll-event
-log (`recordScrollChange`, fired at $2006-write time); A12 during render
-is faked by a SINGLE dummy `busRead(0x1000)` at dot 260 per scanline
-(`ppu.go`, "#352"). So:
-  - Deferred-v must also defer `recordScrollChange` to the commit dot, or
-    `v` and the scroll log diverge → `scroll-split` / `mmc3-split` demo
-    SHAs shift.
-  - Fixing test 4 means replacing the dot-260 dummy with a real per-dot
-    fetch-address sequence (emit the A12 edge at each fetch dot), without
-    changing the net per-scanline edge that mmc3_test 1/2/3/5 + the
-    `a12_test` already rely on.
-  - Both touch the `ppu_vbl_nmi` HARD GATE + the scroll demos.
-
-Verdict: high-risk PPU-timing surgery for 2 knownFail sub-tests. If
-attempted, gate strictly on the full accuracy suite + every demo SHA and
-revert on any regression. Deferred-v (test 6) is the bounded half;
-per-dot fetch A12 (test 4) is the deep half.
+**Why still risky:** the deferred commit moves the dot at which `v`
+(hence the fetch addresses + the PPUADDR A12 edge) updates. It touches
+the `ppu_vbl_nmi` HARD GATE, the `scroll-split` / `mmc3-split` ASCII
+goldens, and the net 241-clocks/frame the A12 filter + `a12_test` rely
+on. If attempted, gate strictly on the full accuracy suite + every demo
+golden and revert on any regression.
 
 ## Accuracy harness
 
@@ -204,8 +210,8 @@ job downloads + runs.
 | instr_misc.nes | 4/4 PASS | abs_x_wrap, branch_wrap, dummy_reads, dummy_reads_apu |
 | instr_test-v5_official.nes | 16/16 PASS | every official opcode × every addressing mode |
 | instr_test-v5.nes (all_instrs) | SKIP | test 3 fails at $AB LXA/ATX — unstable illegal, analog-noise dependent |
-| mmc3_test 1/2/3/5 | PASS | clocking, details, A12_clocking, MMC3 — A12 clocked via PPUADDR ($2006) + non-rendering $2007 |
-| mmc3_test 4/6 | SKIP | scanline_timing #3 + MMC6 #3 — need deferred $2006 v-update (3 PPU cyc) + sub-cycle render A12 timing (#25) |
+| mmc3_test 1/2/3/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, MMC3 — A12 from real per-dot fetches + low-time filter |
+| mmc3_test 4/6 | SKIP | scanline_timing #2 + MMC6 #3 — need deferred $2006 v-update (3 PPU cyc) (#25) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.

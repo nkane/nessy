@@ -22,10 +22,16 @@ func newMMC3ForRev(t *testing.T, sub uint8) *MMC3 {
 	return c
 }
 
-// pulseA12 emulates one A12 rising edge: addr toggles low → high.
+// pulseA12 emulates one A12 rising edge: addr toggles low → high, with
+// the PPU dot count advanced past the MMC3 A12 low-time filter (>10
+// dots) between the two so the rise counts — real fetches are always
+// many dots apart. These tests exercise the IRQ-counter logic, not the
+// filter, so the spacing is just enough to clear it.
 func pulseA12(c *MMC3) {
-	c.PPURead(0x0000) // A12 = 0
-	c.PPURead(0x1000) // A12 = 1 (rising)
+	c.SetA12Cycle(c.a12Cycle + 1)
+	c.PPURead(0x0000) // A12 = 0 (low)
+	c.SetA12Cycle(c.a12Cycle + 16)
+	c.PPURead(0x1000) // A12 = 1 (rising, low stretch > filter)
 }
 
 // RevB (default sub-mapper 0): explicit $C001 reload with latch=0 +

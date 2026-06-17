@@ -5,9 +5,9 @@ import "errors"
 // FullState is the gob-serializable full-PPU capture for nessy save
 // states (#266). Captures every field that influences the next dot's
 // behaviour: register latches, VRAM / OAM / palette, timing
-// (scanline / dot / frameCount), scroll-snapshot history, both
-// framebuffers, and the BG-opaque mask used by the sprite
-// compositor.
+// (scanline / dot / frameCount), both framebuffers, and the BG-opaque
+// mask used by the sprite mux. Scroll falls out of v/x per dot, so no
+// separate scroll-snapshot history is stored.
 //
 // `cart` and `nmi` aren't part of state — they're re-bound from the
 // post-restore PPU's wiring.
@@ -17,7 +17,6 @@ type FullState struct {
 	X                           byte
 	W                           bool
 	ReadBuf                     byte
-	ScrollX, ScrollY            byte
 	ScrollHi                    bool
 	OpenBus                     byte
 
@@ -32,18 +31,6 @@ type FullState struct {
 	Frame        []byte // ScreenWidth*ScreenHeight*4 length
 	DisplayFrame []byte
 	BGOpaque     []bool
-
-	FrameStartScroll ScrollSnapshotState
-	ScrollEvents     []ScrollSnapshotState
-}
-
-// ScrollSnapshotState mirrors the package-private scrollSnapshot
-// with exported fields gob can encode.
-type ScrollSnapshotState struct {
-	Scanline      int
-	ScrollX       byte
-	ScrollY       byte
-	BaseNametable byte
 }
 
 // SaveFullState copies the PPU's mutable state into a FullState.
@@ -56,11 +43,10 @@ func (p *PPU) SaveFullState() FullState {
 	st := FullState{
 		Ctrl: p.ctrl, Mask: p.mask, Status: p.status, OAMAddr: p.oamAddr,
 		V: p.v, T: p.t, X: p.x, W: p.w, ReadBuf: p.readBuf,
-		ScrollX: p.scrollX, ScrollY: p.scrollY, ScrollHi: p.scrollHi,
-		OpenBus: p.openBus,
-		VRAM:    p.vram, OAM: p.oam, Palette: p.palette,
+		ScrollHi: p.scrollHi,
+		OpenBus:  p.openBus,
+		VRAM:     p.vram, OAM: p.oam, Palette: p.palette,
 		Scanline: p.scanline, Dot: p.dot, FrameCount: p.frameCount,
-		FrameStartScroll: exportScroll(p.frameStartScroll),
 	}
 	st.Frame = make([]byte, len(p.frame))
 	copy(st.Frame, p.frame[:])
@@ -68,12 +54,6 @@ func (p *PPU) SaveFullState() FullState {
 	copy(st.DisplayFrame, p.displayFrame[:])
 	st.BGOpaque = make([]bool, len(p.bgOpaque))
 	copy(st.BGOpaque, p.bgOpaque[:])
-	if len(p.scrollEvents) > 0 {
-		st.ScrollEvents = make([]ScrollSnapshotState, len(p.scrollEvents))
-		for i, e := range p.scrollEvents {
-			st.ScrollEvents[i] = exportScroll(e)
-		}
-	}
 	return st
 }
 
@@ -95,29 +75,16 @@ func (p *PPU) LoadFullState(s FullState) error {
 
 	p.ctrl, p.mask, p.status, p.oamAddr = s.Ctrl, s.Mask, s.Status, s.OAMAddr
 	p.v, p.t, p.x, p.w, p.readBuf = s.V, s.T, s.X, s.W, s.ReadBuf
-	p.scrollX, p.scrollY, p.scrollHi = s.ScrollX, s.ScrollY, s.ScrollHi
+	p.scrollHi = s.ScrollHi
 	p.openBus = s.OpenBus
 	p.vram = s.VRAM
 	p.oam = s.OAM
 	p.palette = s.Palette
 	p.scanline, p.dot, p.frameCount = s.Scanline, s.Dot, s.FrameCount
-	p.frameStartScroll = importScroll(s.FrameStartScroll)
 	copy(p.frame[:], s.Frame)
 	copy(p.displayFrame[:], s.DisplayFrame)
 	copy(p.bgOpaque[:], s.BGOpaque)
-	p.scrollEvents = p.scrollEvents[:0]
-	for _, e := range s.ScrollEvents {
-		p.scrollEvents = append(p.scrollEvents, importScroll(e))
-	}
 	return nil
-}
-
-func exportScroll(s scrollSnapshot) ScrollSnapshotState {
-	return ScrollSnapshotState{Scanline: s.scanline, ScrollX: s.scrollX, ScrollY: s.scrollY, BaseNametable: s.baseNametable}
-}
-
-func importScroll(s ScrollSnapshotState) scrollSnapshot {
-	return scrollSnapshot{scanline: s.Scanline, scrollX: s.ScrollX, scrollY: s.ScrollY, baseNametable: s.BaseNametable}
 }
 
 var errBadStateSize = errors.New("save-state payload size mismatch")

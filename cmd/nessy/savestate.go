@@ -22,8 +22,13 @@ import (
 // version on any breaking change to the composite struct or any
 // nested *State; a forward-version save fails fast at load time.
 const (
-	stateMagic   = "NESSAVE\x00"
-	stateVersion = 1
+	stateMagic = "NESSAVE\x00"
+	// v2 (#77): PPU FullState dropped the scroll-snapshot fields
+	// (ScrollX/ScrollY/FrameStartScroll/ScrollEvents) when the per-dot
+	// renderer retired the batched scroll-event log — scroll now derives
+	// from v/x. Old v1 saves fail fast at load rather than silently
+	// gob-dropping those fields.
+	stateVersion = 2
 )
 
 // nesSaveState is the top-level disk format. Composed of each

@@ -165,17 +165,14 @@ func TestMMC3_IRQFiresOnUnderflow(t *testing.T) {
 	c.CPUWrite(0xC001, 0) // schedule reload
 	c.CPUWrite(0xE001, 0) // enable IRQ
 	// First A12 rising: reload (counter = 2).
-	c.PPURead(0x0000)
-	c.PPURead(0x1000) // first rising → reload
+	pulseA12(c) // first rising → reload
 	if sink.asserts != 0 {
 		t.Errorf("IRQ fired on reload; want only on underflow")
 	}
 	// Counter is now 2. Two more rising edges should decrement to 0
 	// + fire IRQ. Each rising needs a low between.
-	c.PPURead(0x0000)
-	c.PPURead(0x1000) // counter 2 → 1
-	c.PPURead(0x0000)
-	c.PPURead(0x1000) // counter 1 → 0 + fire
+	pulseA12(c) // counter 2 → 1
+	pulseA12(c) // counter 1 → 0 + fire
 	if sink.asserts == 0 {
 		t.Errorf("IRQ never fired on underflow")
 	}
@@ -199,8 +196,7 @@ func TestMMC3_RecordsMapperIRQEvent(t *testing.T) {
 	c.CPUWrite(0xE001, 0) // enable
 	// Drive A12 edges until the counter underflows + fires.
 	for range 4 {
-		c.PPURead(0x0000)
-		c.PPURead(0x1000)
+		pulseA12(c)
 	}
 	found := false
 	for _, k := range dbg.kinds {
@@ -224,10 +220,8 @@ func TestMMC3_E000DisablesAndAcks(t *testing.T) {
 	c.CPUWrite(0xC000, 1)
 	c.CPUWrite(0xC001, 0)
 	c.CPUWrite(0xE001, 0)
-	c.PPURead(0x0000)
-	c.PPURead(0x1000) // reload
-	c.PPURead(0x0000)
-	c.PPURead(0x1000) // → 0 + fire
+	pulseA12(c) // reload
+	pulseA12(c) // → 0 + fire
 	if !c.irqPending {
 		t.Fatalf("pre: expected IRQ pending")
 	}

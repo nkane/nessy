@@ -1,23 +1,19 @@
 // Package ppu models the NES Picture Processing Unit (2C02 / 2C07).
 //
-// v0.1 ships background-only rendering. The PPU advances three dots per
-// CPU cycle, walks the 341 × 262 NTSC frame timing diagram, sets the
-// vblank flag at scanline 241 dot 1 (with NMI if PPUCTRL bit 7 is set),
-// and at that boundary renders the visible 256 × 240 region to an RGBA
-// framebuffer using the nametable / attribute / pattern-table state in
-// effect at vblank entry.
+// Rendering is per-dot (epic #73): the PPU advances three dots per CPU
+// cycle, walks the 341 × 262 NTSC (or PAL/Dendy) frame timing diagram,
+// and reproduces the 2C02 fetch pipeline one dot at a time. An 8-dot
+// tile fetch feeds the 16-bit pattern + attribute shift registers; one
+// BG pixel is composited per visible dot from the live v/x scroll
+// registers (perdot.go), and the up-to-8 in-range sprites are evaluated,
+// fetched, and muxed over the BG with sprite-0 hit + the buggy
+// sprite-overflow flag. The vblank flag sets at scanline 241 dot 1
+// (with NMI if PPUCTRL bit 7 is set), where the completed framebuffer is
+// published. Mid-frame scroll, the odd-frame dot-skip, and the real
+// per-scanline A12 toggles (MMC3 IRQ) all fall out of the per-dot model.
 //
-// Out of scope for v0.1 (deliberately deferred):
-//   - Sprites (OAM rendering, sprite-0 hit, sprite overflow)
-//   - $4014 OAMDMA — the byte copy is straightforward but it requires
-//     a CPU "stall N cycles" hook that doesn't exist yet (#175 added
-//     the inbound Ticker direction, not outbound stall).
-//   - Mid-frame scrolling and the v/t/x/w internal-latch state machine.
-//   - Greyscale and color-emphasis bits (PPUMASK bits 0, 5-7).
-//   - Pre-render scanline odd-frame dot-skip.
-//
-// These cost real ROMs accuracy on dynamic / scrolling games, but v0.1
-// only commits to static title screens.
+// Still out of scope: greyscale + color-emphasis bits (PPUMASK bits 0,
+// 5-7) and the left-8-pixel clipping windows (PPUMASK bits 1-2).
 package ppu
 
 import (
@@ -56,6 +52,16 @@ type Cart interface {
 // Mesen2 NesPpu::SetBusAddress → NotifyVramAddressChange.
 type vramAddrHook interface {
 	NotifyVRAMAddr(addr uint16)
+}
+
+// a12Cycler is the optional cart surface for the MMC3 A12 low-time
+// filter (Mesen A12Watcher). The PPU pushes its running dot count
+// before each pattern fetch + PPUADDR-driven bus change so the cart
+// can measure how long A12 stayed low and debounce rapid intra-
+// scanline toggles (the per-dot fetch pipeline raises A12 on every
+// $1xxx pattern fetch). MMC3 implements it alongside NotifyVRAMAddr.
+type a12Cycler interface {
+	SetA12Cycle(dot uint64)
 }
 
 // chrPeeker is the optional cart surface for a side-effect-free CHR
@@ -126,6 +132,7 @@ type NMI interface {
 type PPU struct {
 	cart     Cart
 	vramHook vramAddrHook     // non-nil iff cart implements NotifyVRAMAddr (MMC3)
+	a12Cycle a12Cycler        // non-nil iff cart needs the A12 low-time filter cycle (MMC3)
 	chrPeek  chrPeeker        // non-nil iff cart implements PeekCHR (MMC3)
 	ntMap    nametableMapper  // non-nil iff cart maps nametables per-quadrant (MMC5)
 	slNotify scanlineNotifier // non-nil iff cart wants a per-scanline tick (MMC5)
@@ -141,18 +148,17 @@ type PPU struct {
 	eventsLast   []DebugEvent
 	nmiLevelPrev bool
 
-	// Per-dot background renderer (#74, behind perDotBG). The classic
-	// 2C02 fetch pipeline: 8-dot tile fetch feeding 16-bit pattern +
-	// attribute shift registers, one pixel composited per dot. Gated by
-	// the flag so the batched renderFrame stays the default until the
-	// per-dot path is validated SHA-for-SHA (epic #73).
-	perDotBG      bool
+	// Per-dot background renderer (#73). The 2C02 fetch pipeline: an
+	// 8-dot tile fetch feeds the 16-bit pattern + attribute shift
+	// registers, and one pixel is composited per dot from the live
+	// v/x scroll registers.
 	bgShiftLo     uint16
 	bgShiftHi     uint16
 	bgAttrShiftLo uint16
 	bgAttrShiftHi uint16
-	bgNTLatch     byte // tile index fetched this cycle
-	bgAttrLatch   byte // 2-bit palette for the tile entering the shifters
+	bgNTLatch     byte   // tile index fetched this cycle
+	bgNTAddr      uint16 // nametable address of bgNTLatch (MMC5 ext-attr)
+	bgAttrLatch   byte   // 2-bit palette for the tile entering the shifters
 	bgPatLoLatch  byte
 	bgPatHiLatch  byte
 
@@ -188,17 +194,12 @@ type PPU struct {
 	// fineX (x) is a separate 3-bit latch that picks the leftmost
 	// rendered bit of the prefetched pattern row. w is the shared
 	// write-toggle for $2005 + $2006 (cleared by $2002 reads).
-	v       uint16 // current VRAM address — drives $2007 + per-dot fetches
-	t       uint16 // temp VRAM address — staged for the next render
-	x       byte   // fine X scroll (3 bits)
-	w       bool   // $2005 / $2006 write toggle
-	readBuf byte   // $2007 read returns the previously-buffered byte
-	// scrollX / scrollY are the legacy per-frame snapshot path —
-	// kept alongside the loopy latches until renderScanline migrates
-	// to per-dot v reads (later commit in this branch).
-	scrollX  byte
-	scrollY  byte
-	scrollHi bool // tracks $2005 toggle state alongside $2006
+	v        uint16 // current VRAM address — drives $2007 + per-dot fetches
+	t        uint16 // temp VRAM address — staged for the next render
+	x        byte   // fine X scroll (3 bits)
+	w        bool   // $2005 / $2006 write toggle
+	readBuf  byte   // $2007 read returns the previously-buffered byte
+	scrollHi bool   // tracks $2005 toggle state alongside $2006
 
 	// openBus mirrors the PPU's external data bus latch. Real
 	// silicon's PPU bus is shared between CPU + PPU reads; the latch
@@ -294,33 +295,10 @@ type PPU struct {
 
 	// bgOpaque mirrors `frame` at 1 bool per pixel and records whether
 	// the BG plane wrote a non-zero (i.e. opaque) palette index there.
-	// renderSprites consults this for sprite-0 hit detection and for
-	// the priority-bit "sprite behind BG" composite rule. Populated
-	// by renderFrame; consumed by renderSprites within the same vblank
-	// pass.
+	// The per-dot pipeline writes it as each BG pixel is drawn; the
+	// sprite mux consults it for sprite-0 hit detection and the
+	// priority-bit "sprite behind BG" composite rule.
 	bgOpaque [ScreenWidth * ScreenHeight]bool
-
-	// Scroll capture for mid-frame splits (issue #206). frameStartScroll
-	// is snapshotted at the end of vblank (when scanline rolls back to
-	// 0) so renderFrame knows what scroll values were active for the
-	// scanlines BEFORE any mid-frame $2005 / $2006 / $2000 writes.
-	// scrollEvents records every such write that occurs during visible
-	// scanlines 0..239; renderFrame walks them in order to derive the
-	// active snapshot per scanline. Reset after renderFrame consumes
-	// them. SMB1's status-bar split uses exactly this surface.
-	frameStartScroll scrollSnapshot
-	scrollEvents     []scrollSnapshot
-}
-
-// scrollSnapshot bundles the scroll-relevant state captured at a
-// specific scanline. baseNametable holds PPUCTRL bits 0-1; scrollX /
-// scrollY are the most recent $2005 writes (or $2006 dervied
-// equivalents — game-of-life scroll updates).
-type scrollSnapshot struct {
-	scanline      int
-	scrollX       byte
-	scrollY       byte
-	baseNametable byte // PPUCTRL bits 0-1
 }
 
 // New constructs a PPU wired to a cartridge (for PPU-bus pattern-table
@@ -330,6 +308,9 @@ func New(cart Cart, nmi NMI) *PPU {
 	p := &PPU{cart: cart, nmi: nmi, timing: nes.NTSC}
 	if h, ok := cart.(vramAddrHook); ok {
 		p.vramHook = h
+	}
+	if a, ok := cart.(a12Cycler); ok {
+		p.a12Cycle = a
 	}
 	if pk, ok := cart.(chrPeeker); ok {
 		p.chrPeek = pk
@@ -374,7 +355,7 @@ func (p *PPU) Reset() {
 	}
 	p.ctrl, p.mask, p.status, p.oamAddr = 0, 0, 0, 0
 	p.v, p.t, p.x, p.w, p.readBuf = 0, 0, 0, false, 0
-	p.scrollX, p.scrollY, p.scrollHi = 0, 0, false
+	p.scrollHi = false
 	// Mesen2 NesPpu::Reset sets (_scanline=-1, _cycle=340, _frameCount=1)
 	// — pre-render scanline at its final dot, so the first stepDot wraps
 	// straight to (sl=0, dot=0) of the visible frame instead of walking
@@ -508,13 +489,10 @@ func (p *PPU) Write(addr uint16, v byte) {
 			p.updateNMI()
 		}
 		// Per nesdev: $2000 writes update t's nametable-select bits
-		// (10-11) from data bits 0-1.
+		// (10-11) from data bits 0-1. The per-dot pipeline reads the
+		// nametable select straight out of v/t, so a mid-frame swap
+		// takes effect at the next tile fetch with no extra bookkeeping.
 		p.t = (p.t & 0xF3FF) | (uint16(v&0x03) << 10)
-		// Mid-frame nametable swap also logs a scroll event so the
-		// legacy per-scanline snapshot path captures the change.
-		if prev&0x03 != v&0x03 {
-			p.recordScrollChange()
-		}
 	case 0x2001:
 		p.mask = v
 	case 0x2003:
@@ -527,7 +505,6 @@ func (p *PPU) Write(addr uint16, v byte) {
 			// First write: t coarseX = data >> 3; x = data & 7.
 			p.t = (p.t & 0xFFE0) | uint16(v>>3)
 			p.x = v & 0x07
-			p.scrollX = v
 			p.w = true
 		} else {
 			// Second write: t fineY (bits 12-14) = data & 7;
@@ -535,13 +512,9 @@ func (p *PPU) Write(addr uint16, v byte) {
 			p.t = (p.t & 0x8C1F) |
 				(uint16(v&0x07) << 12) |
 				(uint16(v&0xF8) << 2)
-			p.scrollY = v
 			p.w = false
 		}
-		// Keep the legacy scrollHi toggle in sync until the snapshot
-		// path is fully retired by the per-dot v reads.
 		p.scrollHi = p.w
-		p.recordScrollChange()
 	case 0x2006:
 		if !p.w {
 			// First write: t high byte = data & $3F (bit 14 cleared
@@ -556,11 +529,9 @@ func (p *PPU) Write(addr uint16, v byte) {
 			p.v = p.t
 			p.w = false
 			// $2006's second write commits a fresh VRAM address that
-			// the rendering pipeline reads coarse-X / coarse-Y /
-			// nametable bits out of. SMB1 uses $2006 mid-frame to
-			// reset scroll for its status-bar split.
-			p.scrollFromV()
-			p.recordScrollChange()
+			// the per-dot pipeline reads coarse-X / coarse-Y / fine-Y /
+			// nametable bits out of. SMB1 uses $2006 mid-frame to reset
+			// scroll for its status-bar split.
 			// The new address is driven onto the PPU bus, so A12 can
 			// rise here without any CHR fetch — this is the path MMC3
 			// games + Blargg mmc3_test use to clock the IRQ counter via
@@ -577,174 +548,6 @@ func (p *PPU) Write(addr uint16, v byte) {
 		p.busWrite(p.v&0x3FFF, v)
 		p.incVRAMAddr()
 	}
-}
-
-// recordScrollChange appends a snapshot of the current scroll state
-// to the per-frame events log — but only when the change happens
-// during a visible scanline (0..239). Writes during vblank
-// (240..261) become the next frame's starting scroll instead and
-// are captured by stepDot's frame-start snapshot path. Same goes
-// for the initial pre-scanline boot: no event log spam before the
-// first frame starts.
-func (p *PPU) recordScrollChange() {
-	if p.scanline < 0 || p.scanline >= ScreenHeight {
-		return
-	}
-	p.scrollEvents = append(p.scrollEvents, scrollSnapshot{
-		scanline:      p.scanline,
-		scrollX:       p.scrollX,
-		scrollY:       p.scrollY,
-		baseNametable: p.ctrl & 0x03,
-	})
-}
-
-// scrollFromV synthesizes scrollX / scrollY / baseNametable from the
-// current 15-bit `v` latch. SMB1 sets scroll mid-frame via $2006
-// pairs (not $2005), so we have to derive the effective scroll from
-// `v`'s coarse + fine bits per the nesdev "loopy" layout:
-//
-//	yyy NN YYYYY XXXXX
-//	||| || ||||| +++++-- coarse X (5 bits)
-//	||| || +++++-------- coarse Y (5 bits)
-//	||| ++-------------- nametable select (2 bits)
-//	+++----------------- fine Y (3 bits)
-//
-// fine X is NOT stored in v — it lives in the separate `x` latch,
-// set by the first $2005 write. A $2006 scroll change leaves `x`
-// untouched, so the effective horizontal scroll is coarse-X*8 plus
-// whatever fine-X the last $2005 write latched (#282). Folding p.x
-// in here gives sub-tile horizontal scroll precision; games that
-// never write $2005 keep p.x == 0 so the result is unchanged.
-func (p *PPU) scrollFromV() {
-	coarseX := byte(p.v & 0x1F)
-	coarseY := byte((p.v >> 5) & 0x1F)
-	fineY := byte((p.v >> 12) & 0x07)
-	nametable := byte((p.v >> 10) & 0x03)
-	p.scrollX = coarseX*8 + p.x
-	p.scrollY = coarseY*8 + fineY
-	p.ctrl = (p.ctrl &^ 0x03) | nametable
-}
-
-// checkSprite0HitForScanline scans sprite 0's row intersecting y
-// and sets $2002 bit 6 the moment an opaque sprite-0 pixel
-// overlaps an opaque BG pixel. Called from stepDot at each visible
-// scanline so the flag latches at the actual hit scanline, not a
-// per-frame post-hoc pass. Idempotent — once set, the flag stays
-// latched until end-of-vblank's status clear.
-func (p *PPU) checkSprite0HitForScanline(y int) {
-	if p.status&0x40 != 0 {
-		return
-	}
-	if p.mask&0x18 != 0x18 {
-		return
-	}
-	spriteY := int(p.oam[0]) + 1
-	spriteH := 8
-	if p.ctrl&0x20 != 0 {
-		spriteH = 16
-	}
-	if y < spriteY || y >= spriteY+spriteH {
-		return
-	}
-	tileIdx := p.oam[1]
-	attr := p.oam[2]
-	spriteX := int(p.oam[3])
-	hflip := attr&0x40 != 0
-	vflip := attr&0x80 != 0
-	sprPatternBase := uint16(0)
-	if p.ctrl&0x08 != 0 && p.ctrl&0x20 == 0 {
-		sprPatternBase = 0x1000
-	}
-	bgPatternBase := uint16(0)
-	if p.ctrl&0x10 != 0 {
-		bgPatternBase = 0x1000
-	}
-	row := y - spriteY
-	fineY := row
-	if vflip {
-		fineY = spriteH - 1 - row
-	}
-	var tileAddr uint16
-	if spriteH == 16 {
-		base := uint16(0)
-		if tileIdx&1 != 0 {
-			base = 0x1000
-		}
-		tileNum := uint16(tileIdx & 0xFE)
-		if fineY >= 8 {
-			tileNum |= 1
-		}
-		tileAddr = base + tileNum*16 + uint16(fineY&7)
-	} else {
-		tileAddr = sprPatternBase + uint16(tileIdx)*16 + uint16(fineY)
-	}
-	spLo := p.busRead(tileAddr)
-	spHi := p.busRead(tileAddr + 8)
-
-	// Resolve the active scroll snapshot at THIS scanline (walks
-	// the scrollEvents list — sprite-0 hits typically fire near the
-	// top of the frame so the cursor stays close to index 0).
-	snap := p.activeScrollFor(y)
-
-	for col := 0; col < 8; col++ {
-		px := spriteX + col
-		if px < 0 || px >= ScreenWidth {
-			continue
-		}
-		bitCol := col
-		if !hflip {
-			bitCol = 7 - col
-		}
-		b := uint(bitCol)
-		if ((spLo>>b)&1)|((spHi>>b)&1) == 0 {
-			continue
-		}
-		effX := px + int(snap.scrollX)
-		effY := y + int(snap.scrollY)
-		ntX := snap.baseNametable & 1
-		ntY := (snap.baseNametable >> 1) & 1
-		if effX >= 256 {
-			effX -= 256
-			ntX ^= 1
-		}
-		if effY >= 240 {
-			effY -= 240
-			ntY ^= 1
-		}
-		coarseX := effX / 8
-		coarseY := effY / 8
-		fineX := effX % 8
-		fineYbg := effY % 8
-		ntBase := uint16(0x2000) +
-			uint16(ntY)*0x0800 +
-			uint16(ntX)*0x0400
-		bgTileIdx := p.busRead(ntBase + uint16(coarseY)*32 + uint16(coarseX))
-		bgAddr := bgPatternBase + uint16(bgTileIdx)*16 + uint16(fineYbg)
-		bgLo := p.busRead(bgAddr)
-		bgHi := p.busRead(bgAddr + 8)
-		bgB := uint(7 - fineX)
-		if ((bgLo>>bgB)&1)|((bgHi>>bgB)&1) != 0 {
-			if p.status&0x40 == 0 {
-				p.recordEvent(eventSprite0, 0, 0)
-			}
-			p.status |= 0x40
-			return
-		}
-	}
-}
-
-// activeScrollFor returns the scrollSnapshot in effect at the
-// given visible scanline — the latest event with scanline <= y,
-// or frameStartScroll if no events come before y.
-func (p *PPU) activeScrollFor(y int) scrollSnapshot {
-	active := p.frameStartScroll
-	for _, ev := range p.scrollEvents {
-		if ev.scanline > y {
-			break
-		}
-		active = ev
-	}
-	return active
 }
 
 // incCoarseX advances v's coarse-X (bits 0-4) wrapping at 32, where
@@ -832,6 +635,9 @@ func (p *PPU) incVRAMAddr() {
 // carts that watch A12 (MMC3). No-op for every other mapper.
 func (p *PPU) notifyVRAMAddr() {
 	if p.vramHook != nil {
+		if p.a12Cycle != nil {
+			p.a12Cycle.SetA12Cycle(p.dots)
+		}
 		p.vramHook.NotifyVRAMAddr(p.v & 0x3FFF)
 	}
 }
@@ -903,16 +709,6 @@ func (p *PPU) stepDot() {
 			p.frameCount++
 			// Publish the finished frame's event log + start fresh (#31).
 			p.rotateEvents()
-			// New frame begins. Snapshot the current scroll values so
-			// renderFrame at this frame's eventual vblank entry knows
-			// what was active for the scanlines that precede any
-			// mid-frame $2005 / $2006 / $2000 writes.
-			p.frameStartScroll = scrollSnapshot{
-				scanline:      0,
-				scrollX:       p.scrollX,
-				scrollY:       p.scrollY,
-				baseNametable: p.ctrl & 0x03,
-			}
 		}
 		// A new scanline begins — tick the cart's per-scanline counter
 		// (MMC5 in-frame scanline IRQ, #55). No-op for other mappers.
@@ -928,93 +724,29 @@ func (p *PPU) stepDot() {
 	if p.scanline == p.timing.PreRenderScanline && p.dot == 339 {
 		p.oddSkipArmed = p.renderingEnabledDelayed
 	}
-	// Per-scanline sprite-0 hit detector (issue #268). At each
-	// visible scanline we live-check whether sprite 0's row at y
-	// overlaps an opaque BG pixel; first overlap latches $2002 bit
-	// 6 at the actual scanline of the hit, no frame-start
-	// prediction needed. Fires at dot 1 so the game's poll loop
-	// (which runs from the just-emitted vblank/end-of-prev-scanline
-	// NMI / opcodes) sees the flag in time for the mid-frame scroll
-	// write.
-	if !p.perDotBG && p.dot == 1 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		p.checkSprite0HitForScanline(p.scanline)
-	}
-	// Per-scanline BG render + sprite composite (issue #268). Each
-	// visible scanline rasterizes at dot 256: BG first, then
-	// sprites composited over it. Combining the passes here means
-	// Ebiten's Draw can sample the framebuffer at any moment and
-	// always sees a "complete" scanline (BG + sprites for that y)
-	// — the previous per-frame-only sprite composite left a window
-	// during which scanlines had BG but no sprites yet, causing
-	// visible flicker / "sprites erased by scanline" reports.
-	if p.dot == 256 && p.scanline >= 0 && p.scanline < ScreenHeight {
-		// Per-dot path (#74/#75) paints BG + sprites across dots 1-256;
-		// the batched path draws BG then sprites here at dot 256.
-		if !p.perDotBG {
-			p.renderScanlineEnabled(p.scanline)
-			p.compositeScanlineSprites(p.scanline)
-		}
-	}
-	// Per-scanline A12 clock (#352, unblocks #323). Real silicon does
-	// sprite-pattern fetches every scanline during hblank (dots
-	// 257-320), toggling PPU address line A12 even when no sprite is
-	// in range. MMC3's scanline IRQ counts those A12 rising edges.
-	// Our burst renderer skips the garbage fetches, so emit one dummy
-	// sprite-pattern-table read here to reproduce the per-scanline
-	// A12 rise (after the dot-256 BG fetch has driven A12 low for
-	// the common BG=$0000 / sprite=$1000 config). The value is
-	// discarded + the framebuffer is untouched — demo SHAs hold; the
-	// only effect is the cart's A12 edge detector (e.g. MMC3) ticking.
-	if !p.perDotBG && p.dot == 260 && p.renderingEnabled() &&
-		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
-		_ = p.busRead(0x1000)
-	}
-	// Loopy v register increments per nesdev's PPU timing diagram
-	// (issue #268 stage 3). Only fire when rendering is on. Visible
-	// scanlines + pre-render scanline run the same fetch state
-	// machine; vblank scanlines do nothing. The per-dot BG path (#74)
-	// owns the fetch + increments itself, so this batched schedule is
-	// skipped when that flag is on.
-	if !p.perDotBG && p.renderingEnabled() &&
-		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
-		switch {
-		case p.dot >= 1 && p.dot <= 256 && p.dot%8 == 0:
-			// Tile fetch boundary — coarse-X bumps every 8 dots
-			// from dot 8 through dot 256.
-			p.incCoarseX()
-			if p.dot == 256 {
-				// Dot 256 also triggers the Y increment (the dot
-				// after the last visible-pixel tile fetch).
-				p.incY()
-			}
-		case p.dot == 257:
-			// Horizontal reload: t's coarse-X + horizontal NT bit
-			// copy into v so the next scanline's tile fetches start
-			// from the freshly-set scroll-X.
-			p.copyXFromT()
-		case p.scanline == p.timing.PreRenderScanline && p.dot >= 280 && p.dot <= 304:
-			// Vertical reload: t's fine-Y + coarse-Y + vertical NT
-			// bit copy into v during pre-render. Real silicon
-			// repeats the copy across 25 dots; the result is
-			// idempotent so a single copy at this range suffices.
-			p.copyYFromT()
-		}
-	}
-	// Per-dot BG pipeline (#74): owns fetch + shifters + pixel output +
-	// the v-increment schedule for visible + pre-render scanlines.
-	if p.perDotBG && p.renderingEnabled() &&
+	// Per-dot BG + sprite pipeline (#73): the 2C02 fetch pipeline owns
+	// the fetch, shift registers, per-dot pixel output (BG + sprites),
+	// the v-increment schedule, and the real per-scanline A12 toggles
+	// (BG fetches at $0xxx, sprite/garbage fetches at $1xxx). Runs on
+	// visible + pre-render scanlines while rendering is enabled.
+	if p.renderingEnabled() &&
 		(p.scanline < ScreenHeight || p.scanline == p.timing.PreRenderScanline) {
 		p.bgTick()
+	} else if p.scanline < ScreenHeight && p.dot >= 1 && p.dot <= 256 {
+		// Rendering disabled on a visible scanline: every visible dot
+		// outputs the universal backdrop ($3F00) with no opaque BG, so
+		// the screen shows a flat backdrop fill (matches the old batched
+		// BG-off path; the 2C02 backdrop-palette-hack is out of scope).
+		p.renderBackdropPixel(p.dot - 1)
 	}
 	switch {
 	case p.scanline == p.timing.VBlankScanline && p.dot == 1:
-		// Per-scanline render already painted every visible scanline
-		// at its dot 256. At vblank entry we publish the back buffer
-		// to the presentation buffer (atomic copy under displayMu)
-		// so Ebiten's Draw goroutine always sees a complete frame,
-		// then flush per-frame state + raise vblank + fire NMI.
+		// The per-dot pipeline painted every visible scanline (BG +
+		// sprites) as it went. At vblank entry we publish the back
+		// buffer to the presentation buffer (atomic copy under
+		// displayMu) so Ebiten's Draw goroutine always sees a complete
+		// frame, then flush per-frame state + raise vblank + fire NMI.
 		p.PresentFrame()
-		p.scrollEvents = p.scrollEvents[:0]
 		// Mesen2 model: preventVblFlag (latched by a $2002 read on the
 		// previous dot at sl=241 dot=0) suppresses the vblank-set + NMI
 		// for this whole frame. Cleared unconditionally so the next
@@ -1044,13 +776,9 @@ func (p *PPU) stepDot() {
 // FrameBuffer returns a 256 × 240 RGBA byte slice. Indexed row-
 // major, 4 bytes per pixel (R, G, B, A). Returns the presentation
 // buffer — atomically swapped at vblank entry from the back buffer
-// the per-scanline render writes to. Safe to read from any
-// goroutine without coordinating with stepDot.
-//
-// Tests that call renderFrame() directly (bypassing the emulator
-// step loop) need to call PresentFrame() explicitly afterwards to
-// publish the back buffer; otherwise FrameBuffer returns whatever
-// was last published.
+// the per-dot pipeline writes to. Safe to read from any goroutine
+// without coordinating with stepDot. The back buffer is published here
+// at vblank entry, so FrameBuffer returns the last completed frame.
 func (p *PPU) FrameBuffer() []byte {
 	p.displayMu.Lock()
 	defer p.displayMu.Unlock()
@@ -1060,8 +788,8 @@ func (p *PPU) FrameBuffer() []byte {
 }
 
 // PresentFrame copies the back framebuffer into the presentation
-// buffer. Called from stepDot at vblank entry; also exposed so
-// tests calling renderFrame() directly can flush the result.
+// buffer. Called from stepDot at vblank entry; also exposed so tests
+// that step the pipeline by hand can flush the result.
 func (p *PPU) PresentFrame() {
 	p.displayMu.Lock()
 	copy(p.displayFrame[:], p.frame[:])

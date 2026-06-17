@@ -25,7 +25,7 @@ func (c *bgCart) Mirroring() nes.Mirroring { return c.mir }
 // setupBGScreen configures a PPU + cart with a deterministic static
 // background: a CHR pattern, a tiled nametable, and a palette, scroll 0,
 // BG enabled. Returns a PPU ready to render frames.
-func setupBGScreen(perDot bool) *ppu.PPU {
+func setupBGScreen() *ppu.PPU {
 	c := &bgCart{mir: nes.MirrorVertical}
 	// CHR: give several tiles distinct non-zero pixel patterns.
 	for tile := 0; tile < 16; tile++ {
@@ -35,7 +35,6 @@ func setupBGScreen(perDot bool) *ppu.PPU {
 		}
 	}
 	p := ppu.New(c, nil)
-	p.SetPerDotBG(perDot)
 
 	// Palette $3F00..$3F1F with varied entries.
 	p.Write(0x2006, 0x3F)
@@ -76,7 +75,6 @@ func setupBGScreen(perDot bool) *ppu.PPU {
 // the dot-260 dummy — so it still fires per scanline (#76).
 func TestPerDotA12_MMC3ScanlineIRQ(t *testing.T) {
 	p, c, sink := newMMC3PPU(t)
-	p.SetPerDotBG(true)
 	c.CPUWrite(0xC000, 8) // latch = 8
 	c.CPUWrite(0xC001, 0) // reload
 	c.CPUWrite(0xE001, 0) // enable
@@ -96,12 +94,13 @@ func TestPerDotA12_MMC3ScanlineIRQ(t *testing.T) {
 	}
 }
 
-// The per-dot BG renderer produces a byte-identical frame to the batched
-// renderer on a static (scroll-0, no mid-frame writes) screen — the
-// phase-1 acceptance gate (#74).
-func TestPerDotBG_MatchesBatched(t *testing.T) {
-	frame := func(perDot bool) ([]byte, byte) {
-		p := setupBGScreen(perDot)
+// The per-dot pipeline renders a deterministic, non-trivial frame from
+// a static (scroll-0, no mid-frame writes) screen: two independent runs
+// of the same setup produce byte-identical framebuffers, and the result
+// is not a flat backdrop fill (the tiled nametable actually rasterized).
+func TestPerDotBG_DeterministicStaticFrame(t *testing.T) {
+	frame := func() ([]byte, byte) {
+		p := setupBGScreen()
 		// Step two full frames so the pipeline is primed + a clean frame
 		// is published.
 		for range 2 * nes.NTSC.DotsPerScanline * nes.NTSC.ScanlinesPerFrame {
@@ -109,28 +108,32 @@ func TestPerDotBG_MatchesBatched(t *testing.T) {
 		}
 		return p.FrameBuffer(), p.Status() & 0x40 // bit 6 = sprite-0 hit
 	}
-	batched, batchedS0 := frame(false)
-	perDot, perDotS0 := frame(true)
+	a, aS0 := frame()
+	b, bS0 := frame()
 
-	if batchedS0 != perDotS0 {
-		t.Errorf("sprite-0 hit differs: batched=$%02X per-dot=$%02X", batchedS0, perDotS0)
+	if aS0 != bS0 {
+		t.Errorf("sprite-0 hit non-deterministic: run1=$%02X run2=$%02X", aS0, bS0)
 	}
-
-	if len(batched) != len(perDot) {
-		t.Fatalf("frame sizes differ: batched %d, per-dot %d", len(batched), len(perDot))
+	if len(a) != len(b) {
+		t.Fatalf("frame sizes differ: %d vs %d", len(a), len(b))
 	}
-	diff, firstAt := 0, -1
-	for i := range batched {
-		if batched[i] != perDot[i] {
-			diff++
-			if firstAt < 0 {
-				firstAt = i
-			}
+	for i := range a {
+		if a[i] != b[i] {
+			px := i / 4
+			t.Fatalf("per-dot render non-deterministic at pixel (%d,%d)",
+				px%ppu.ScreenWidth, px/ppu.ScreenWidth)
 		}
 	}
-	if diff != 0 {
-		px := firstAt / 4
-		t.Errorf("per-dot BG differs from batched: %d/%d bytes, first at pixel (%d,%d)",
-			diff, len(batched), px%ppu.ScreenWidth, px/ppu.ScreenWidth)
+	// Not a flat fill: at least two distinct pixel colours rasterized
+	// from the tiled nametable.
+	distinct := false
+	for i := 4; i < len(a); i += 4 {
+		if a[i] != a[0] || a[i+1] != a[1] || a[i+2] != a[2] {
+			distinct = true
+			break
+		}
+	}
+	if !distinct {
+		t.Error("per-dot frame is a flat fill; expected the tiled nametable to rasterize")
 	}
 }

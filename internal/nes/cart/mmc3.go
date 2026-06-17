@@ -66,6 +66,15 @@ type MMC3 struct {
 	irqEnabled bool
 	irqPending bool
 	prevA12    bool
+	// A12 low-time filter (Mesen A12Watcher, minDelay=10 PPU dots). A
+	// rising edge only clocks the IRQ counter once A12 has stayed low
+	// for >10 dots — so the rapid intra-scanline A12 toggles a per-dot
+	// fetch pipeline produces (pattern fetches at $1xxx between NT/AT at
+	// $2xxx) don't over-clock the counter. a12Cycle is the PPU's running
+	// dot count, pushed via SetA12Cycle before each clock.
+	a12Cycle      uint64 // current PPU dot count (set by the PPU)
+	a12LastCycle  uint64 // dot count at the previous clockA12 call
+	a12CyclesDown uint32 // dots A12 has been continuously low (0 = high)
 	// revA flips clockA12 to the NEC MMC3A behaviour: the reload
 	// flag forces reload; counter==0 reloads then decrements before
 	// firing. RevB (default, Sharp silicon) reloads to latch THEN
@@ -260,6 +269,13 @@ func (c *MMC3) PeekCHR(addr uint16) byte {
 // NesPpu::NotifyVramAddressChange).
 func (c *MMC3) NotifyVRAMAddr(addr uint16) { c.clockA12(addr) }
 
+// SetA12Cycle feeds the PPU's running dot count to the A12 low-time
+// filter. The PPU calls it before each pattern fetch + PPUADDR-driven
+// bus change so clockA12 can measure how long A12 stayed low (the
+// Mesen A12Watcher debounce). The ppu package calls this via its
+// optional a12Cycler interface.
+func (c *MMC3) SetA12Cycle(dot uint64) { c.a12Cycle = dot }
+
 // chrOffset computes the byte offset into c.chr for a PPU address
 // in $0000-$1FFF based on the active CHR bank mode + bank
 // registers.
@@ -316,8 +332,30 @@ func (c *MMC3) chrOffset(addr uint16) int {
 //	  RevA fires every edge. Klax depends on RevA.
 func (c *MMC3) clockA12(addr uint16) {
 	a12 := addr&0x1000 != 0
-	rising := a12 && !c.prevA12
 	c.prevA12 = a12
+
+	// Mesen A12Watcher: accumulate the time A12 stays low; a rise only
+	// counts once that low stretch exceeds minDelay (10 PPU dots).
+	// a12Cycle is the PPU's monotonic dot count, so the delta is normally
+	// >= 0 — but a save-state restore or reset can move it backward;
+	// guard the unsigned subtraction so a backward jump can't underflow
+	// to a near-max value (which would spuriously satisfy minDelay).
+	const minDelay = 10
+	if c.a12CyclesDown > 0 && c.a12Cycle > c.a12LastCycle {
+		c.a12CyclesDown += uint32(c.a12Cycle - c.a12LastCycle)
+	}
+	c.a12LastCycle = c.a12Cycle
+	rising := false
+	if !a12 {
+		if c.a12CyclesDown == 0 {
+			c.a12CyclesDown = 1 // start counting the low stretch
+		}
+	} else {
+		if c.a12CyclesDown > minDelay {
+			rising = true
+		}
+		c.a12CyclesDown = 0
+	}
 	if !rising {
 		return
 	}
