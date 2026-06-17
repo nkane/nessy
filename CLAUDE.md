@@ -171,8 +171,9 @@ straddle the two:
 
 ### #25 — mmc3_test 4/6: deferred $2006/$2007 v-update (scoped, NOT done)
 
-Researched against Mesen2 (`~/dev/Mesen2`); captured here so the next
-attempt doesn't re-derive it. The per-dot migration (#73) closed the
+Researched against Mesen2 (`~/dev/Mesen2`; re-check against MesenCE
+`Core/NES/` for any newer fixes — same layout); captured here so the
+next attempt doesn't re-derive it. The per-dot migration (#73) closed the
 "per-dot fetch A12" half — A12 now rises at the real fetch dots, so
 test 4's failing check shifted from #3 ("sooner") to #2 ("later"). What
 remains for BOTH 4 and 6 is the deferred v-commit:
@@ -276,12 +277,25 @@ breaking changes show up as major bumps.
   `go test -tags=accuracy ./cmd/nessy/...` before claiming an accuracy
   fix landed.
 
+## Reference emulator: MesenCE (was Mesen2)
+
+The cycle-precision source of truth is Mesen's `Core/NES/`. As of
+2026-06-16 the reference is **MesenCE**
+([nesdev-org/MesenCE](https://github.com/nesdev-org/MesenCE)) — the
+community-managed fork that succeeds the wound-down
+[SourMesen/Mesen2](https://github.com/SourMesen/Mesen2). MesenCE is a
+fork with the same `Core/NES/` file + line layout, so every existing
+`Mesen2 Core/NES/...` source-line reference in this file and the ADRs
+stays valid. **New cycle-precision work cites MesenCE; existing "ported
+from Mesen2" notes are accurate provenance and stay as written.**
+
 ## How this code came to be
 
 The accuracy + sub-cycle ordering work landed across many chippy PRs
-between 2026-05-15 and 2026-05-31, ported from
-[Mesen2](https://github.com/SourMesen/Mesen2) (`Core/NES/`). Notable
-references:
+between 2026-05-15 and 2026-05-31, ported from Mesen2
+([SourMesen/Mesen2](https://github.com/SourMesen/Mesen2), now succeeded
+by [MesenCE](https://github.com/nesdev-org/MesenCE)) (`Core/NES/`).
+Notable references:
 
 - `Core/NES/NesCpu.cpp:325-447` — `ProcessPendingDma` (chippy#377).
 - `Core/NES/NesPpu.cpp:553-582` — `SetMaskRegister` deferred state
