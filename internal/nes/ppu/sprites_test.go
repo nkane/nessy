@@ -74,8 +74,7 @@ func TestRenderSprites_SingleSpriteRenders(t *testing.T) {
 	p.Write(0x2004, 0x00) // attr
 	p.Write(0x2004, 64)   // X
 
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 
 	wantR, wantG, wantB := paletteRGB(0x16)
 	off := (64*ScreenWidth + 64) * 4
@@ -106,11 +105,7 @@ func TestRenderSprites_Sprite0HitFires(t *testing.T) {
 	p.Write(0x2004, 0)  // attr (front, no flip)
 	p.Write(0x2004, 64) // X
 
-	p.renderFrame()
-	if p.status&0x40 != 0 {
-		t.Fatalf("sprite-0 hit set pre-renderSprites; want clean")
-	}
-	p.renderSprites()
+	renderStaticFrame(p)
 	if p.status&0x40 == 0 {
 		t.Errorf("sprite-0 hit should be set after opaque-over-opaque composite; status = $%02X", p.status)
 	}
@@ -128,8 +123,7 @@ func TestRenderSprites_Sprite0HitDoesNotFireOverTransparentBG(t *testing.T) {
 	p.Write(0x2004, 0)
 	p.Write(0x2004, 64)
 
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	if p.status&0x40 != 0 {
 		t.Errorf("sprite-0 hit fired over transparent BG; status = $%02X", p.status)
 	}
@@ -150,8 +144,7 @@ func TestRenderSprites_OverflowFiresWith9SpritesPerScanline(t *testing.T) {
 		p.Write(0x2004, 0)
 		p.Write(0x2004, byte(i*16)) // X stride
 	}
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	if p.status&0x20 == 0 {
 		t.Errorf("overflow not set with 9 sprites on one scanline; status = $%02X", p.status)
 	}
@@ -171,8 +164,7 @@ func TestRenderSprites_OverflowDoesNotFireAtEight(t *testing.T) {
 		p.Write(0x2004, 0)
 		p.Write(0x2004, byte(i*16))
 	}
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	if p.status&0x20 != 0 {
 		t.Errorf("overflow set with 8 sprites; want clear, status = $%02X", p.status)
 	}
@@ -191,8 +183,7 @@ func TestRenderSprites_PriorityBehindBGHidesSprite(t *testing.T) {
 	p.Write(0x2004, 0x20) // attr: priority behind
 	p.Write(0x2004, 64)
 
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 
 	// The pixel should be BG[1] (white-ish $30), NOT sprite[1] ($16).
 	bgR, bgG, bgB := paletteRGB(0x30)
@@ -230,8 +221,7 @@ func TestRenderSprites_EightBySixteenRenders(t *testing.T) {
 	p.Write(0x2004, 0)
 	p.Write(0x2004, 64)
 
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	wantR, _, _ := paletteRGB(0x16)
 	// Row 64+12 = inside the bottom half of an 8×16 sprite.
 	off := ((64+12)*ScreenWidth + 64) * 4
@@ -271,8 +261,7 @@ func TestRenderSprites_LowerOAMIndexWinsPriority(t *testing.T) {
 	p.Write(0x2004, 0x02)
 	p.Write(0x2004, 64)
 
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	wantR, _, _ := paletteRGB(0x16) // red wins (sprite 0)
 	off := (64*ScreenWidth + 64) * 4
 	if p.frame[off+0] != wantR {
@@ -306,8 +295,7 @@ func TestRenderSprites_SpriteShowDisabledSuppressesEverything(t *testing.T) {
 		p.Write(0x2004, 0)
 		p.Write(0x2004, byte(i*16))
 	}
-	p.renderFrame()
-	p.renderSprites()
+	renderStaticFrame(p)
 	if p.status&0x20 != 0 {
 		t.Errorf("overflow set despite sprite-show off; status = $%02X", p.status)
 	}

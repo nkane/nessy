@@ -18,6 +18,9 @@ func (p *PPU) busRead(addr uint16) byte {
 	switch {
 	case addr < 0x2000:
 		if p.cart != nil {
+			if p.a12Cycle != nil {
+				p.a12Cycle.SetA12Cycle(p.dots)
+			}
 			return p.cart.PPURead(addr)
 		}
 		return 0
@@ -49,6 +52,9 @@ func (p *PPU) busWrite(addr uint16, v byte) {
 	switch {
 	case addr < 0x2000:
 		if p.cart != nil {
+			if p.a12Cycle != nil {
+				p.a12Cycle.SetA12Cycle(p.dots)
+			}
 			p.cart.PPUWrite(addr, v)
 		}
 	case addr < 0x3F00:

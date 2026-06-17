@@ -208,7 +208,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "0474550dbf811bf1acda2178bf355edd5c100088479a09d881f84994c1690b82",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_4_BIN",
 		maxFrames: 2500,
-		knownFail: "status $03 (Failed #3) — scanline 0 IRQ should occur sooner when $2000=$08; needs sub-cycle rendering A12 timing + deferred $2006 v-update (#25)",
+		knownFail: "status $02 (Failed #2) — scanline 0 IRQ should occur later when $2000=$08; needs sub-cycle rendering A12 timing + deferred $2006 v-update (#25)",
 	},
 	{
 		name:      "mmc3_test_5_mmc3.nes",

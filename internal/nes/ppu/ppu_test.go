@@ -18,6 +18,30 @@ func (c *fakeCart) PPURead(addr uint16) byte     { return c.chr[addr&0x1FFF] }
 func (c *fakeCart) PPUWrite(addr uint16, v byte) { c.chr[addr&0x1FFF] = v }
 func (c *fakeCart) Mirroring() nes.Mirroring     { return c.mir }
 
+// frameDots is one full NTSC frame's worth of PPU dots.
+const frameDots = 341 * 262
+
+// renderStaticFrame resets scroll to (0,0) on nametable 0 then steps two
+// full frames so the per-dot pipeline renders a clean static frame
+// (BG + sprites) into p.frame. Replaces the retired batched
+// renderFrame()/renderSprites() entry points (#77) for tests that set
+// up a fixed screen and assert on pixels. Zeroing v/t/x clears any
+// scroll/nametable state left by $2006/$2007 register pokes; pattern-
+// table selection ($2000 bits 3-4) is preserved.
+func renderStaticFrame(p *PPU) {
+	p.t, p.v, p.x = 0, 0, 0
+	// Two full frames prime the pipeline; then stop in post-render
+	// (scanline 240) of a freshly rendered frame so all 240 visible
+	// rows are in p.frame AND the sprite-0 / overflow status flags are
+	// still latched — the PPU clears $2002 bits 5-7 at pre-render (261).
+	for range 2 * frameDots {
+		p.stepDot()
+	}
+	for p.scanline != 240 {
+		p.stepDot()
+	}
+}
+
 // fakeNMI counts how many times TriggerNMI was called.
 type fakeNMI struct {
 	count int // NMIs the CPU would take = rising edges of the /NMI line
@@ -172,14 +196,24 @@ func TestPPU_PaletteReadIsImmediate(t *testing.T) {
 	}
 }
 
-// $2005 PPUSCROLL toggles independently of internal latch state but
-// honors the same write-toggle reset on $2002 read.
+// $2005 PPUSCROLL folds the scroll into the loopy t/x latches: the
+// first write sets t coarse-X + the fine-X latch, the second sets t
+// fine-Y + coarse-Y. The write toggle resets to low after two writes.
 func TestPPU_ScrollLatchToggle(t *testing.T) {
 	p := New(&fakeCart{}, nil)
-	p.Write(0x2005, 0x42) // X = $42
-	p.Write(0x2005, 0x37) // Y = $37
-	if p.scrollX != 0x42 || p.scrollY != 0x37 {
-		t.Errorf("scroll = ($%02X, $%02X); want ($42, $37)", p.scrollX, p.scrollY)
+	p.Write(0x2005, 0x42) // X = $42 → t coarseX = $42>>3 = 8, x = $42&7 = 2
+	p.Write(0x2005, 0x37) // Y = $37 → t fineY = 7, coarseY = $37>>3 = 6
+	if got := p.t & 0x1F; got != 0x42>>3 {
+		t.Errorf("t coarseX = %d; want %d", got, 0x42>>3)
+	}
+	if p.x != 0x42&7 {
+		t.Errorf("fine-X = %d; want %d", p.x, 0x42&7)
+	}
+	if got := (p.t >> 12) & 0x07; got != 0x37&7 {
+		t.Errorf("t fineY = %d; want %d", got, 0x37&7)
+	}
+	if got := (p.t >> 5) & 0x1F; got != 0x37>>3 {
+		t.Errorf("t coarseY = %d; want %d", got, 0x37>>3)
 	}
 	if p.scrollHi {
 		t.Errorf("scroll toggle should be back to low after 2 writes")
@@ -255,8 +289,8 @@ func TestPPU_RendersUniformBackground(t *testing.T) {
 	p.Write(0x2007, 0x0F)
 	p.Write(0x2007, 0x30)
 	// Nametable already zero-filled → every cell points to tile 0.
-	// Render a frame.
-	p.renderFrame()
+	// Render a frame via the per-dot pipeline.
+	renderStaticFrame(p)
 	// All pixels should be palette[1] color → NES $30 → ~(0xFF, 0xFE, 0xFF).
 	wantR, wantG, wantB := paletteRGB(0x30)
 	for y := range ScreenHeight {
@@ -283,7 +317,7 @@ func TestPPU_BGDisabledShowsUniversalColor(t *testing.T) {
 	p.Write(0x2006, 0x3F)
 	p.Write(0x2006, 0x00)
 	p.Write(0x2007, 0x21)
-	p.renderFrame()
+	renderStaticFrame(p)
 	wantR, wantG, wantB := paletteRGB(0x21)
 	off := (50*ScreenWidth + 50) * 4
 	if p.frame[off+0] != wantR || p.frame[off+1] != wantG || p.frame[off+2] != wantB {

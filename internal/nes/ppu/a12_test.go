@@ -34,18 +34,21 @@ func newMMC3PPU(t *testing.T) (*ppu.PPU, *cart.MMC3, *countingSink) {
 	return p, c, sink
 }
 
-// With rendering on + BG pattern table at $0000, the per-scanline
-// dummy sprite-pattern fetch (#352) drives one A12 rising edge per
-// scanline even with zero sprites in OAM — so the MMC3 scanline IRQ
-// fires repeatedly across a frame. Before the dummy fetch this was
-// 0 (A12 never rose without in-range sprites).
+// With rendering on + BG pattern table at $0000 and sprite pattern
+// table at $1000 (the canonical MMC3 IRQ config), the per-scanline
+// garbage sprite-pattern fetches drive one A12 rising edge per scanline
+// even with zero sprites in OAM — so the MMC3 scanline IRQ fires
+// repeatedly across a frame. The per-dot renderer reads the sprite
+// pattern table address for the empty slots, so A12 only rises when the
+// sprite table differs from the BG table (real-silicon behavior, unlike
+// the old batched dummy fetch that always hit $1000).
 func TestA12_MMC3ScanlineIRQFiresWithoutSprites(t *testing.T) {
 	p, c, sink := newMMC3PPU(t)
 	c.CPUWrite(0xC000, 8) // IRQ latch = 8 scanlines
 	c.CPUWrite(0xC001, 0) // reload
 	c.CPUWrite(0xE001, 0) // IRQ enable
 
-	p.Write(0x2000, 0x00) // BG pattern table $0000 (A12 low during BG fetch)
+	p.Write(0x2000, 0x08) // BG pattern $0000, sprite pattern $1000
 	p.Write(0x2001, 0x08) // BG show → rendering enabled
 
 	// Step a full NTSC frame of dots. The dummy fetch acks happen via
@@ -90,10 +93,16 @@ func TestA12_MMC3ClocksViaPPUADDR(t *testing.T) {
 	}
 
 	// First rise: counter==0 → reload to 1. Second rise (after a fall):
-	// 1 → 0 → IRQ. Drive several low/high cycles.
+	// 1 → 0 → IRQ. Drive several low/high cycles. The PPU clock advances
+	// between the low + high writes so A12's low stretch clears the
+	// MMC3 A12 low-time filter (>10 dots) — real CPU code has many
+	// cycles between $2006 writes; rendering is off so the ticks make
+	// no CHR fetches (no spurious A12 edges).
 	for range 4 {
 		setA12(false)
+		p.Tick(5) // 15 dots low > the 10-dot filter threshold
 		setA12(true)
+		p.Tick(5)
 	}
 	if sink.asserts == 0 {
 		t.Fatal("MMC3 IRQ never fired from PPUADDR-driven A12 toggles; want >= 1")

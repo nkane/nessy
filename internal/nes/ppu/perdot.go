@@ -1,16 +1,12 @@
 package ppu
 
-// Per-dot background renderer (#74, epic #73). Reproduces the 2C02
+// Per-dot background renderer (epic #73). Reproduces the 2C02
 // background fetch pipeline one dot at a time: an 8-dot tile fetch
 // (nametable / attribute / pattern-low / pattern-high) feeds 16-bit
 // pattern + attribute shift registers, and one pixel is composited per
-// visible dot from the live `v`/`x` scroll registers. This is the path
-// that retires the batched renderFrame + scroll-event log; while it's
-// behind the perDotBG flag the batched renderer stays authoritative and
-// owns the v-increment schedule.
-//
-// SetPerDotBG toggles the per-dot background path (test/migration only).
-func (p *PPU) SetPerDotBG(on bool) { p.perDotBG = on }
+// visible dot from the live `v`/`x` scroll registers. This is the sole
+// rendering path; it owns the fetch, shifters, pixel output, and the
+// v-increment schedule.
 
 // bgTick runs one dot of the per-dot background pipeline. Called from
 // stepDot on visible + pre-render scanlines while rendering is enabled.
@@ -50,9 +46,13 @@ func (p *PPU) bgTick() {
 		if p.scanline == p.timing.PreRenderScanline {
 			next = 0
 		}
-		if next < ScreenHeight {
-			p.prepareSpritesFor(next)
-		}
+		// Run the sprite-fetch pass on EVERY rendering scanline (incl.
+		// the last visible line 239, whose fetches target the off-screen
+		// "line 240"). Real silicon does the garbage fetches regardless,
+		// so A12 toggles on all 241 rendering scanlines — the MMC3 IRQ
+		// counter clocks exactly 241×/frame (mmc3_test 2 #7). The units
+		// for an off-screen line are simply never composited.
+		p.prepareSpritesFor(next)
 
 	case d >= 321 && d <= 336:
 		// Prefetch the next scanline's first two tiles. No per-dot shift
@@ -77,6 +77,7 @@ func (p *PPU) bgTick() {
 // dot&7==1 from the previous tile's latches, then fetch NT/AT/pattern
 // for the next tile. Mirrors Mesen `NesPpu::LoadTileInfo`.
 func (p *PPU) bgLoadTileInfo() {
+	p.setCHRContext(false) // background CHR fetches (MMC5 'B' set in 8x16)
 	switch p.dot & 0x07 {
 	case 1:
 		p.reloadBGShifters()
@@ -131,6 +132,11 @@ func (p *PPU) prepareSpritesFor(line int) {
 	if p.mask&0x10 == 0 {
 		return // sprites hidden: only the garbage A12 fetches run
 	}
+	// Drive the sprite-overflow flag ($2002 bit 5) through the 2C02's
+	// buggy evaluator (#283) for the line being evaluated. Real silicon
+	// evaluates line N's sprites during line N-1 (dots 65-256), so doing
+	// it here at the previous line's dot 257 matches hardware ordering.
+	p.evaluateSpriteOverflow(line, spriteH)
 	for i := 0; i < 64 && p.sprCount < 8; i++ {
 		spriteY := int(p.oam[i*4+0]) + 1
 		if line < spriteY || line >= spriteY+spriteH {
@@ -172,8 +178,8 @@ func (p *PPU) prepareSpritesFor(line int) {
 
 // renderSpritePixel composites the winning sprite pixel at column x over
 // the BG pixel already drawn this dot, and latches the sprite-0 hit.
-// First non-transparent sprite in OAM order wins; matches the batched
-// compositeScanlineSprites + checkSprite0HitForScanline semantics.
+// First non-transparent sprite in OAM order wins; priority + sprite-0
+// overlap follow the 2C02 rules.
 func (p *PPU) renderSpritePixel(x int) {
 	canHit := p.mask&0x08 != 0 && p.mask&0x10 != 0
 	bgHere := p.bgOpaque[p.scanline*ScreenWidth+x]
@@ -224,10 +230,29 @@ func (p *PPU) reloadBGShifters() {
 }
 
 func (p *PPU) bgFetchNT() {
-	p.bgNTLatch = p.busRead(0x2000 | (p.v & 0x0FFF))
+	p.bgNTAddr = 0x2000 | (p.v & 0x0FFF)
+	p.bgNTLatch = p.busRead(p.bgNTAddr)
+}
+
+// bgExtAttrActive reports whether MMC5 extended attributes drive this
+// tile's palette + CHR bank from ExRAM instead of the attribute table
+// and normal CHR banking (#55, ExRAM mode 1).
+func (p *PPU) bgExtAttrActive() bool {
+	return p.extAttr != nil && p.extAttr.ExtendedAttributeActive()
 }
 
 func (p *PPU) bgFetchAT() {
+	if p.bgExtAttrActive() {
+		// ExtAttrTile returns the palette + both pattern planes in one
+		// shot (it owns the ExRAM CHR-bank selection). Latch all three
+		// here; the pattern-fetch stages become no-ops this tile.
+		fineY := (p.v >> 12) & 0x07
+		pal, low, high := p.extAttr.ExtAttrTile(p.bgNTAddr, p.bgNTLatch, fineY)
+		p.bgAttrLatch = pal
+		p.bgPatLoLatch = low
+		p.bgPatHiLatch = high
+		return
+	}
 	addr := uint16(0x23C0) | (p.v & 0x0C00) | ((p.v >> 4) & 0x38) | ((p.v >> 2) & 0x07)
 	at := p.busRead(addr)
 	shift := ((p.v >> 4) & 0x04) | (p.v & 0x02)
@@ -242,19 +267,46 @@ func (p *PPU) bgPatternBase() uint16 {
 }
 
 func (p *PPU) bgFetchPatLo() {
+	if p.bgExtAttrActive() {
+		return // pattern planes already latched by bgFetchAT
+	}
 	fineY := (p.v >> 12) & 0x07
 	p.bgPatLoLatch = p.busRead(p.bgPatternBase() + uint16(p.bgNTLatch)*16 + fineY)
 }
 
 func (p *PPU) bgFetchPatHi() {
+	if p.bgExtAttrActive() {
+		return // pattern planes already latched by bgFetchAT
+	}
 	fineY := (p.v >> 12) & 0x07
 	p.bgPatHiLatch = p.busRead(p.bgPatternBase() + uint16(p.bgNTLatch)*16 + fineY + 8)
 }
 
+// renderBackdropPixel paints the universal backdrop ($3F00) at column x
+// on a visible scanline when rendering is disabled, clearing bgOpaque so
+// nothing composites as "over BG". Used for the rendering-off path that
+// the per-dot fetch pipeline (gated on rendering) doesn't cover.
+func (p *PPU) renderBackdropPixel(x int) {
+	r, g, b := paletteRGB(p.palette[0])
+	off := (p.scanline*ScreenWidth + x) * 4
+	p.frame[off+0], p.frame[off+1], p.frame[off+2], p.frame[off+3] = r, g, b, 0xFF
+	p.bgOpaque[p.scanline*ScreenWidth+x] = false
+}
+
 // renderBGPixel composites one background pixel at screen column x using
-// the shifters + fine-X mux. Mirrors the batched renderScanline's
-// palette + bgOpaque semantics so the two paths match SHA-for-SHA.
+// the pattern + attribute shifters and the fine-X mux, recording opacity
+// in bgOpaque for the sprite compositor + sprite-0 hit.
 func (p *PPU) renderBGPixel(x int) {
+	// BG-show off ($2001 bit 3) while rendering is still enabled (sprites
+	// on): the BG layer is the universal backdrop + no opaque BG pixels
+	// (so sprites composite over the backdrop, sprite-0 can't hit).
+	if p.mask&0x08 == 0 {
+		r, g, b := paletteRGB(p.palette[0])
+		off := (p.scanline*ScreenWidth + x) * 4
+		p.frame[off+0], p.frame[off+1], p.frame[off+2], p.frame[off+3] = r, g, b, 0xFF
+		p.bgOpaque[p.scanline*ScreenWidth+x] = false
+		return
+	}
 	bit := 15 - uint(p.x)
 	lo := byte((p.bgShiftLo >> bit) & 1)
 	hi := byte((p.bgShiftHi >> bit) & 1)
