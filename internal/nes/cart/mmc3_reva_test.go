@@ -49,18 +49,66 @@ func TestMMC3_RevB_ReloadWithZeroLatchFires(t *testing.T) {
 	}
 }
 
-// RevA (sub-mapper 3): same setup, no IRQ. The explicit reload
-// path silently loads + skips the post-reload IRQ check.
-func TestMMC3_RevA_ReloadWithZeroLatchSilent(t *testing.T) {
+// RevA (sub-mapper 3): an EXPLICIT $C001 reload with latch=0 fires on
+// the next A12 edge, same as RevB. The rev-A/rev-B difference is NOT the
+// explicit-reload path (both fire when the reload flag is set) — it is
+// the STUCK-AT-ZERO clock, exercised below. Matches Mesen's RevA
+// condition `(count > 0 || reloadFlag) && newCount == 0`.
+func TestMMC3_RevA_ExplicitReloadZeroFires(t *testing.T) {
 	c := newMMC3ForRev(t, 3)
 	sink := &fakeIRQSink{}
 	c.SetIRQSink(sink)
+	c.CPUWrite(0xC000, 0) // latch = 0
+	c.CPUWrite(0xC001, 0) // reload flag
+	c.CPUWrite(0xE001, 0) // IRQ enable on
+	pulseA12(c)
+	if sink.asserts != 1 {
+		t.Errorf("RevA explicit-reload-zero asserts = %d; want 1", sink.asserts)
+	}
+}
+
+// The defining rev-A behaviour: once the counter sits at 0, a further
+// A12 edge with NO reload flag reloads 0->0 and stays SILENT on rev-A
+// (rev-B would fire on every such edge). This is what Blargg mmc3_test 6
+// (MMC6) pins; the byte-identical rev-B test 5 ROM expects the opposite,
+// so the revision is resolved by content hash (mmc3RevAHashes).
+func TestMMC3_RevA_StuckAtZeroSilent(t *testing.T) {
+	c := newMMC3ForRev(t, 3)
+	sink := &fakeIRQSink{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0xC000, 1) // latch = 1
+	c.CPUWrite(0xC001, 0) // reload
+	c.CPUWrite(0xE001, 0) // enable
+	pulseA12(c)           // reload -> counter = 1 (silent)
+	pulseA12(c)           // 1 -> 0, fires
+	if sink.asserts != 1 {
+		t.Fatalf("RevA setup: natural countdown asserts = %d; want 1", sink.asserts)
+	}
+	// Now latch = 0 with NO reload flag: each further edge reloads 0->0.
+	// Rev-A keeps SILENT (rev-B would fire every edge).
 	c.CPUWrite(0xC000, 0)
+	pulseA12(c)
+	pulseA12(c)
+	if sink.asserts != 1 {
+		t.Errorf("RevA stuck-at-zero fired: asserts = %d; want 1", sink.asserts)
+	}
+}
+
+// RevB contrast: the same stuck-at-zero clock (latch=0) fires every edge.
+func TestMMC3_RevB_StuckAtZeroFires(t *testing.T) {
+	c := newMMC3ForRev(t, 0)
+	sink := &fakeIRQSink{}
+	c.SetIRQSink(sink)
+	c.CPUWrite(0xC000, 1)
 	c.CPUWrite(0xC001, 0)
 	c.CPUWrite(0xE001, 0)
-	pulseA12(c)
-	if sink.asserts != 0 {
-		t.Errorf("RevA explicit-reload-zero asserted: %d", sink.asserts)
+	pulseA12(c) // reload -> 1
+	pulseA12(c) // 1 -> 0, fires
+	c.CPUWrite(0xC000, 0)
+	pulseA12(c) // 0 -> 0 reload, RevB fires
+	pulseA12(c) // fires again
+	if sink.asserts < 3 {
+		t.Errorf("RevB stuck-at-zero asserts = %d; want >= 3 (fires every edge)", sink.asserts)
 	}
 }
 

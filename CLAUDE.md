@@ -169,53 +169,42 @@ straddle the two:
   (mmc3_test 2 "details" #7). Closes mmc3_test 1/2/3/5. The remaining 4/6
   need the deferred $2006 v-update (#25) — see below.
 
-### #25 — mmc3_test 4/6: per-dot fetch-A12 edge precision (NOT deferred-v)
+### #25 — mmc3_test 4 (test 6 DONE: MMC3 rev-A/rev-B)
 
-**Deferred-v hypothesis FALSIFIED (2026-06-20).** An earlier read of
-Mesen2 `NesPpu::UpdateState` guessed that mmc3_test 4 + 6 needed the
-deferred $2006/$2007 v-commit (commit `v` 3 PPU cycles late, increment
-1 cycle late). A full faithful port of that was built and measured on
-the branch `feat/per-dot-phase5`. Result: it moved **neither** test
-(4 stayed $02, 6 stayed $03), closed nothing, and **regressed the
-mmc3-split demo** (the faithful `scanline>=240 || !rendering` A12 gate
-fires the NMI handler's vblank $2006 writes, desyncing the IRQ
-counter). Reverted per "revert on any regression." Do NOT re-attempt
-deferred-v for these tests — it is the wrong layer.
+Two earlier hypotheses for these two sub-tests were FALSIFIED before the
+real cause was found by an A12 edge trace (env-gated logger in
+`MMC3.clockA12`). Recorded so nobody re-walks them:
 
-**What the failure actually is (A12 edge trace, captured via an
-env-gated logger in `MMC3.clockA12`).** For mmc3_test 6 (MMC6 #3 —
-"IRQ shouldn't occur when reloading after counter normally reaches 0"),
-the trace around the failure:
+1. **Deferred $2006/$2007 v-commit** (a Mesen `UpdateState` port) —
+   moved neither test, regressed the mmc3-split demo, reverted.
+2. **Per-dot fetch-A12 "over-clocking"** — the trace showed ONE A12
+   rise per scanline (timing correct), not multiple. Not over-clocking.
 
-```
-sl=230  cnt 1->0  latch=1  en=true        FIRE   ← expected (decrement to 0)
-sl=231  cnt 0->0  latch=0  reload=true     FIRE   ← spurious
-sl=233  cnt 0->0  latch=0                  FIRE×2 ← spurious
-sl=235  cnt 0->0 / 1->0  latch=0           FIRE×2 ← spurious
-```
+**test 6 (MMC6) — DONE.** It is a pure MMC3 IRQ-counter revision issue.
+The 2C02 fetch A12 timing was already correct (1 rise/scanline). The
+trace's spurious fires were the rev-B counter firing on a STUCK-AT-ZERO
+clock (counter already 0, no reload flag → reload 0→0 → fire). mmc3_test
+5 (rev-B, SMB3/MM3 silicon) wants exactly that; mmc3_test 6 (rev-A,
+Crystalis/MMC6 silicon) wants it SILENT. The two ROMs are **byte-
+identical in their iNES headers** (mapper 4, no submapper), so the chip
+revision cannot be read from the header — it is resolved by content hash
+(`mmc3RevAHashes` in `cart/mmc3.go`), mirroring Mesen's game database
+(chip == "MMC3A"). The fix: (a) `clockA12RevA` now matches Mesen —
+`(count > 0 || reloadFlag) && newCount == 0` (was an inverted
+`!preReload` test); (b) `NewMMC3` sets `revA` from the PRG‖CHR hash.
+mmc3_test 1/2/3/5/6 all PASS; the `mmc3-split` demo (rev-B) is unchanged.
 
-nessy fires the MMC3 IRQ **6×** where the test wants **1×**. Every edge
-is `addr=$1010` — **sprite pattern fetches during rendering**, NOT the
-$2006/$2007 PPUADDR path. nessy produces **multiple counted A12 rises
-per scanline** in this render config (over-clocking the counter) and
-fires on reload-to-zero / every edge while the counter sits at 0 with
-latch=0. So test 6 is a **per-dot rendering fetch-A12 edge-sequence**
-problem (same layer as test 4's `$2000=$08` sprite-fetch A12 timing),
-plus the reload-to-zero IRQ-suppression detail — fixed in the
-`perdot.go` / `ppu.go` fetch path + `cart/mmc3.go`, NOT in `ppu.Write`.
-
-nessy's MMC3 RevB counter math was verified to match MesenCE's
-`NotifyVramAddressChange` exactly, so the counter logic is right — the
-gap is the **edge timing/count**, i.e. how many A12 rises the render
-pipeline emits per scanline and on which dots. MesenCE would not build
-locally (no SDL2 + an `EmuApiWrapper.o` error), so no live edge diff was
-available; the trace localizes it without one.
-
-**Next attempt:** instrument the per-scanline A12 rise count for this
-render config, compare against the expected single sprite-fetch rise,
-and fix the over-clocking in the fetch pipeline. Gate strictly on the
-full accuracy suite + every demo golden (`scroll-split` / `mmc3-split`)
-+ the `ppu_vbl_nmi` HARD GATE.
+**test 4 (scanline_timing #2) — STILL OPEN.** "Scanline 0 IRQ should
+occur later when $2000=$08." $2000=$08 puts sprite patterns at $1000.
+This is the one genuinely about the EXACT dot the sprite-fetch A12 edge
+rises in the render pipeline — nessy batches all sprite fetches at dot
+257 (`prepareSpritesFor`) instead of spreading them across dots 257-320,
+so the A12 edge lands a few dots off where scanline_timing #2 pins it.
+Fixing it means spreading the sprite pattern fetches across the real
+257-320 sub-cycles (or otherwise emitting the A12 edge at the exact
+fetch dot) without shifting the net per-scanline edge that mmc3_test
+1/2/3/5 + `a12_test` rely on. Gate strictly on the full accuracy suite +
+every demo golden + the `ppu_vbl_nmi` HARD GATE.
 
 ## Accuracy harness
 
@@ -232,8 +221,9 @@ job downloads + runs.
 | instr_misc.nes | 4/4 PASS | abs_x_wrap, branch_wrap, dummy_reads, dummy_reads_apu |
 | instr_test-v5_official.nes | 16/16 PASS | every official opcode × every addressing mode |
 | instr_test-v5.nes (all_instrs) | SKIP | test 3 fails at $AB LXA/ATX — unstable illegal, analog-noise dependent |
-| mmc3_test 1/2/3/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, MMC3 — A12 from real per-dot fetches + low-time filter |
-| mmc3_test 4/6 | SKIP | scanline_timing #2 + MMC6 #3 — per-dot rendering fetch-A12 edge-count/timing (over-clocks the MMC3 counter); NOT deferred-v (falsified, see #25) |
+| mmc3_test 1/2/3/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, MMC3 (rev-B) — A12 from real per-dot fetches + low-time filter |
+| mmc3_test 6 | PASS | MMC6 — rev-A IRQ counter (stuck-at-zero stays silent), selected by content hash since the header matches the rev-B test 5 ROM (#25) |
+| mmc3_test 4 | SKIP | scanline_timing #2 — exact sub-cycle sprite-fetch A12 dot ($2000=$08); nessy batches sprite fetches at dot 257 (#25) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
