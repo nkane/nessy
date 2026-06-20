@@ -1,10 +1,26 @@
 package cart
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/nkane/nessy/internal/nes"
 )
+
+// mmc3RevAHashes maps sha256(PRG||CHR) → true for ROMs whose MMC3 IRQ
+// counter is the NEC MMC3 rev-A (vs the default Sharp rev-B). The two
+// revisions differ ONLY in the IRQ-on-counter-reload semantics
+// (clockA12RevA vs clockA12), and the iNES header does NOT encode which
+// chip a cart uses — the Blargg mmc3_test 5 (rev-B) and 6 (rev-A) ROMs
+// are byte-identical in their headers (mapper 4, iNES, no submapper).
+// So, like Mesen's game database (chip == "MMC3A"), the revision is
+// resolved by content hash. Seeded with the rev-A test vehicle; extend
+// with real rev-A games (Crystalis, Klax, …) as they're verified.
+var mmc3RevAHashes = map[string]bool{
+	// Blargg mmc3_test "6-MMC6.nes" — rev-A IRQ reload behaviour.
+	"6c1c987f14dc25c7632f5f905b7609faa238d953a6cff0fac38b5993c47d4253": true,
+}
 
 // MMC3 is mapper 4 — Nintendo's late-NES workhorse. Powers SMB3,
 // Mega Man 3-6, Kirby's Adventure, Crystalis, Battletoads, and
@@ -75,12 +91,11 @@ type MMC3 struct {
 	a12Cycle      uint64 // current PPU dot count (set by the PPU)
 	a12LastCycle  uint64 // dot count at the previous clockA12 call
 	a12CyclesDown uint32 // dots A12 has been continuously low (0 = high)
-	// revA flips clockA12 to the NEC MMC3A behaviour: the reload
-	// flag forces reload; counter==0 reloads then decrements before
-	// firing. RevB (default, Sharp silicon) reloads to latch THEN
-	// re-checks the new counter for IRQ. Klax depends on RevA's
-	// "fires every A12 edge when latch=1" timing. iNES 2.0 sub-
-	// mapper 3 selects RevA; default is RevB.
+	// revA selects the NEC rev-A IRQ counter (clockA12RevA) over the
+	// default Sharp rev-B (clockA12). The two differ only in the
+	// stuck-at-zero fire rule (see clockA12RevA). The iNES header can't
+	// encode the chip revision, so revA is set from NES 2.0 sub-mapper 3
+	// OR a content-hash lookup (mmc3RevAHashes) for known rev-A carts.
 	revA bool
 
 	irqSink   IRQSink
@@ -110,7 +125,7 @@ func NewMMC3(rom *nes.ROM) (*MMC3, error) {
 		prg:        rom.PRG,
 		battery:    rom.Battery,
 		fourScreen: rom.Mirroring == nes.MirrorFourScreen,
-		revA:       rom.SubMapper == 3,
+		revA:       rom.SubMapper == 3 || mmc3IsRevA(rom.PRG, rom.CHR),
 	}
 	switch {
 	case len(rom.CHR) == 0:
@@ -125,6 +140,16 @@ func NewMMC3(rom *nes.ROM) (*MMC3, error) {
 	// before the game writes $A000.
 	c.mirrorH = rom.Mirroring == nes.MirrorHorizontal
 	return c, nil
+}
+
+// mmc3IsRevA reports whether a cart's PRG||CHR content hash is in the
+// known rev-A set. The header can't distinguish rev-A from rev-B, so
+// the revision is resolved by content (mirrors Mesen's game database).
+func mmc3IsRevA(prg, chr []byte) bool {
+	h := sha256.New()
+	h.Write(prg)
+	h.Write(chr)
+	return mmc3RevAHashes[hex.EncodeToString(h.Sum(nil))]
 }
 
 // SetIRQSink wires the CPU's IRQ-source surface. May be nil for
@@ -378,21 +403,30 @@ func (c *MMC3) clockA12(addr uint16) {
 	}
 }
 
-// clockA12RevA implements the NEC MMC3A variant. The only
-// functional difference vs RevB: an explicit reload through $C001
-// (the irqReload flag) silently loads the counter from the latch
-// and skips the post-reload IRQ check. The natural counter==0 →
-// reload path still fires (when enabled). Klax wrote $C001 with
-// latch=0 expecting NO IRQ; under RevB that would fire.
+// clockA12RevA implements the NEC MMC3 rev-A IRQ counter. The only
+// functional difference vs rev-B is the fire condition: rev-A fires
+// only when the counter was reloaded from a NONZERO value or by an
+// explicit $C001 reload — a "stuck at zero" clock (counter already 0,
+// no reload flag) reloads 0->0 and stays SILENT. Rev-B fires on ANY
+// post-clock zero, including the stuck-at-zero case. Mesen MMC3.h
+// `NotifyVramAddressChange`: `(count > 0 || _irqReload) && newCount == 0`.
+// Blargg mmc3_test 6 (MMC6) pins rev-A; the byte-identical test 5 ROM
+// pins rev-B, so the revision is chosen by content hash (see
+// mmc3RevAHashes), not the iNES header.
 func (c *MMC3) clockA12RevA() {
-	preReload := c.irqReload
+	before := c.irqCounter
+	reloadFlag := c.irqReload
 	if c.irqCounter == 0 || c.irqReload {
 		c.irqCounter = c.irqLatch
 		c.irqReload = false
 	} else {
 		c.irqCounter--
 	}
-	if c.irqCounter == 0 && c.irqEnabled && !preReload {
+	// MesenCE RevA (MMC3.h NotifyVramAddressChange): fire only when the
+	// counter was reloaded from a NONZERO value or by an explicit $C001
+	// reload — i.e. a 0->0 stuck-at-zero clock does NOT fire. RevB fires
+	// on any post-clock zero.
+	if (before > 0 || reloadFlag) && c.irqCounter == 0 && c.irqEnabled {
 		c.irqPending = true
 		c.recordIRQ()
 		if c.irqSink != nil {

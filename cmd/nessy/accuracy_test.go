@@ -208,7 +208,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "0474550dbf811bf1acda2178bf355edd5c100088479a09d881f84994c1690b82",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_4_BIN",
 		maxFrames: 2500,
-		knownFail: "status $02 (Failed #2) — scanline 0 IRQ should occur later when $2000=$08; needs per-dot rendering fetch-A12 edge timing (NOT deferred-v — falsified, see #25)",
+		knownFail: "status $02 (Failed #2) — scanline 0 IRQ should occur later when $2000=$08; needs exact sub-cycle sprite-fetch A12 edge timing in the render pipeline (#25). MMC3 rev-A/rev-B IRQ semantics (test 6) are now correct.",
 	},
 	{
 		name:      "mmc3_test_5_mmc3.nes",
@@ -223,7 +223,8 @@ var accuracyROMs = []accuracyROM{
 		sha:       "e6bdbadf46cc4bf7b26e496ecab44e60a8b1279c1b9cf16df090c9832adf6943",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_6_BIN",
 		maxFrames: 2500,
-		knownFail: "status $03 (Failed #3) — IRQ shouldn't occur when reloading after counter normally reaches 0; nessy over-clocks the MMC3 counter (multiple A12 rises/scanline in the render fetch path) + fires on reload-to-zero. Per-dot fetch-A12 edge issue, NOT deferred-v (falsified, see #25)",
+		// PASS — rev-A IRQ counter (stuck-at-zero stays silent), selected
+		// by content hash since the header matches the rev-B test 5 ROM.
 	},
 	{
 		// Blargg sprite_overflow_tests (1.Basics representative). The
