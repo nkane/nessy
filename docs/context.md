@@ -334,10 +334,18 @@ the carve preserved that history. Highlights:
   instruction-stepped batch tick for NMOS / 65C02 so the chippy
   debugger + Klaus functional tests + BCD sweeps run byte-identically.
   Per-cycle is opt-in via the variant + ticker wiring.
-- **Mesen2 as reference implementation.** When in doubt about a
-  cycle-precision detail, Mesen2's `Core/NES/` is the source of truth.
+- **Mesen as reference implementation.** When in doubt about a
+  cycle-precision detail, Mesen's `Core/NES/` is the source of truth.
   The PR thread carries explicit line references to Mesen sources for
   every load-bearing borrow.
+  - **Reference moved to MesenCE going forward (2026-06-16).** Upstream
+    [SourMesen/Mesen2](https://github.com/SourMesen/Mesen2) is wound down;
+    development continues in the community fork
+    [nesdev-org/MesenCE](https://github.com/nesdev-org/MesenCE) (Sour +
+    nesdev community). MesenCE is a fork of Mesen2 with the same
+    `Core/NES/` layout, so every existing Mesen2 source-line reference
+    in this repo stays valid. New work cites MesenCE; historical
+    "ported from Mesen2" notes are left as-is (accurate provenance).
 - **`stallTick` retained for Reset only.** chippy's pre-PR-#377 stall
   drain is gone, but the per-cycle clock advance helper is still used
   by `cpu.Reset`'s 8-cycle warmup so the APU $4017 reset delay is
