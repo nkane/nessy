@@ -208,7 +208,9 @@ var accuracyROMs = []accuracyROM{
 		sha:       "0474550dbf811bf1acda2178bf355edd5c100088479a09d881f84994c1690b82",
 		pathEnv:   "CHIPPY_ACCURACY_MMC3_4_BIN",
 		maxFrames: 2500,
-		knownFail: "status $02 (Failed #2) — scanline 0 IRQ should occur later when $2000=$08; needs exact sub-cycle sprite-fetch A12 edge timing in the render pipeline (#25). MMC3 rev-A/rev-B IRQ semantics (test 6) are now correct.",
+		// PASS — sprite-pattern A12 rise emitted at dot 261 (slot-0
+		// phase 4) instead of the batched dot 257, so the $2000=$08
+		// scanline-0 IRQ lands on the dot the test pins (spriteFetchDot).
 	},
 	{
 		name:      "mmc3_test_5_mmc3.nes",

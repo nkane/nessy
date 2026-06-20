@@ -8,6 +8,17 @@ package ppu
 // rendering path; it owns the fetch, shifters, pixel output, and the
 // v-increment schedule.
 
+// spriteFetchDot is the dot at which the batched sprite-pattern fetch
+// runs, driving the per-scanline sprite-pattern A12 rise. 261 = phase 4
+// of sprite slot 0 in the 2C02's 257-320 fetch window (the slot's two
+// garbage NT fetches at $2xxx precede it), where the first real sprite
+// pattern fetch lands — MesenCE `NesPpu::LoadSpriteTileInfo`. Emitting
+// the A12 edge here (vs the old batched-at-257) puts the MMC3 IRQ clock
+// on the exact dot Blargg mmc3_test 4 (scanline_timing #2, $2000=$08)
+// pins, without changing the net one-rise-per-scanline the low-time
+// filter + mmc3_test 1/2/3/5 rely on.
+const spriteFetchDot = 261
+
 // bgTick runs one dot of the per-dot background pipeline. Called from
 // stepDot on visible + pre-render scanlines while rendering is enabled.
 // It owns the fetch, shifter, pixel output, and the v-increment schedule
@@ -38,9 +49,16 @@ func (p *PPU) bgTick() {
 
 	case d == 257:
 		p.copyXFromT()
+
+	case d == spriteFetchDot:
 		// Sprite eval + fetch for the NEXT scanline happens in the
-		// 257-320 window on real silicon; doing it here drives A12 from
-		// the real sprite-pattern fetches (#76). Pre-render (no visible
+		// 257-320 window on real silicon; the sprite-PATTERN fetches
+		// drive the A12 rise. On the 2C02 the first pattern fetch
+		// (LoadSpriteTileInfo, MesenCE NesPpu.cpp ~961) lands at dot 261
+		// — phase 4 of sprite slot 0 (the slot's two garbage NT fetches
+		// at $2xxx come first). nessy still batches the fetch, but emits
+		// it at that dot so the MMC3 A12 edge lands where mmc3_test 4
+		// (scanline_timing #2, $2000=$08) pins it. Pre-render (no visible
 		// next line of its own) prepares line 0.
 		next := p.scanline + 1
 		if p.scanline == p.timing.PreRenderScanline {

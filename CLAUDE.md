@@ -169,11 +169,12 @@ straddle the two:
   (mmc3_test 2 "details" #7). Closes mmc3_test 1/2/3/5. The remaining 4/6
   need the deferred $2006 v-update (#25) — see below.
 
-### #25 — mmc3_test 4 (test 6 DONE: MMC3 rev-A/rev-B)
+### #25 — mmc3_test 4 + 6 DONE (full mmc3_test suite passes)
 
-Two earlier hypotheses for these two sub-tests were FALSIFIED before the
-real cause was found by an A12 edge trace (env-gated logger in
-`MMC3.clockA12`). Recorded so nobody re-walks them:
+Both remaining sub-tests now pass; the whole Blargg mmc3_test 1-6 suite
+is green. Two earlier hypotheses were FALSIFIED before the real causes
+were found by an A12 edge trace (env-gated logger in `MMC3.clockA12`).
+Recorded so nobody re-walks them:
 
 1. **Deferred $2006/$2007 v-commit** (a Mesen `UpdateState` port) —
    moved neither test, regressed the mmc3-split demo, reverted.
@@ -194,17 +195,20 @@ revision cannot be read from the header — it is resolved by content hash
 `!preReload` test); (b) `NewMMC3` sets `revA` from the PRG‖CHR hash.
 mmc3_test 1/2/3/5/6 all PASS; the `mmc3-split` demo (rev-B) is unchanged.
 
-**test 4 (scanline_timing #2) — STILL OPEN.** "Scanline 0 IRQ should
-occur later when $2000=$08." $2000=$08 puts sprite patterns at $1000.
-This is the one genuinely about the EXACT dot the sprite-fetch A12 edge
-rises in the render pipeline — nessy batches all sprite fetches at dot
-257 (`prepareSpritesFor`) instead of spreading them across dots 257-320,
-so the A12 edge lands a few dots off where scanline_timing #2 pins it.
-Fixing it means spreading the sprite pattern fetches across the real
-257-320 sub-cycles (or otherwise emitting the A12 edge at the exact
-fetch dot) without shifting the net per-scanline edge that mmc3_test
-1/2/3/5 + `a12_test` rely on. Gate strictly on the full accuracy suite +
-every demo golden + the `ppu_vbl_nmi` HARD GATE.
+**test 4 (scanline_timing #2) — DONE.** "Scanline 0 IRQ should occur
+later when $2000=$08" ($2000=$08 puts sprite patterns at $1000). This
+one IS about the exact dot the sprite-fetch A12 edge rises. nessy batches
+the sprite fetch into a single stepDot; it was at dot 257, so the A12
+rise was ~4 dots early. The 2C02 emits the first sprite PATTERN fetch at
+dot 261 (slot-0 phase 4, after the slot's two $2xxx garbage NT fetches —
+MesenCE `LoadSpriteTileInfo`). Fix: run the batched fetch at
+`spriteFetchDot = 261` (`perdot.go`) instead of 257. This shifts only the
+A12-edge DOT, not the per-scanline count (still one filtered rise), so
+mmc3_test 1/2/3/5 + `a12_test` are unaffected; the `mmc3-split` demo's
+IRQ split moves down ~1 row (more accurate — its golden was regenerated).
+The sprite pattern DATA is still fetched in one batch (rendering reads it
+next scanline regardless); only the A12 emission dot matters here. Fully
+spreading the 8 sprite slots across 257-320 is unnecessary for this test.
 
 ## Accuracy harness
 
@@ -221,9 +225,8 @@ job downloads + runs.
 | instr_misc.nes | 4/4 PASS | abs_x_wrap, branch_wrap, dummy_reads, dummy_reads_apu |
 | instr_test-v5_official.nes | 16/16 PASS | every official opcode × every addressing mode |
 | instr_test-v5.nes (all_instrs) | SKIP | test 3 fails at $AB LXA/ATX — unstable illegal, analog-noise dependent |
-| mmc3_test 1/2/3/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, MMC3 (rev-B) — A12 from real per-dot fetches + low-time filter |
+| mmc3_test 1/2/3/4/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, scanline_timing (sprite-fetch A12 at dot 261), MMC3 (rev-B) |
 | mmc3_test 6 | PASS | MMC6 — rev-A IRQ counter (stuck-at-zero stays silent), selected by content hash since the header matches the rev-B test 5 ROM (#25) |
-| mmc3_test 4 | SKIP | scanline_timing #2 — exact sub-cycle sprite-fetch A12 dot ($2000=$08); nessy batches sprite fetches at dot 257 (#25) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
