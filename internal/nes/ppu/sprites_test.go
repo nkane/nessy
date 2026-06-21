@@ -269,9 +269,12 @@ func TestRenderSprites_LowerOAMIndexWinsPriority(t *testing.T) {
 	}
 }
 
-// PPUMASK bit 4 off → sprite layer suppressed entirely, even
-// sprite-0 hit / overflow don't fire.
-func TestRenderSprites_SpriteShowDisabledSuppressesEverything(t *testing.T) {
+// PPUMASK bit 4 off ($2001=$08, BG only) suppresses the sprite LAYER —
+// no sprite pixels drawn, no sprite-0 hit. But sprite EVALUATION (hence
+// the overflow flag) still runs because rendering is enabled (BG on);
+// the 2C02 evaluates sprites whenever BG OR sprites are shown. Blargg
+// sprite_overflow_tests/1.Basics test 7 ($2001=$08) pins this (#19).
+func TestRenderSprites_SpriteShowDisabledSuppressesLayerNotOverflow(t *testing.T) {
 	cart := &fakeCart{}
 	loadCheckerTile(cart, 0)
 	loadSpriteTile(cart, 1)
@@ -287,7 +290,33 @@ func TestRenderSprites_SpriteShowDisabledSuppressesEverything(t *testing.T) {
 	p.Write(0x2006, 0x11)
 	p.Write(0x2007, 0x16)
 
-	// Nine sprites — would normally trigger overflow.
+	// Nine sprites on one scanline — triggers overflow during eval.
+	for i := range 9 {
+		p.Write(0x2003, byte(i*4))
+		p.Write(0x2004, 63)
+		p.Write(0x2004, 1)
+		p.Write(0x2004, 0)
+		p.Write(0x2004, byte(i*16))
+	}
+	renderStaticFrame(p)
+	// Overflow STILL sets (sprite eval runs with BG on).
+	if p.status&0x20 == 0 {
+		t.Errorf("overflow not set with BG on + sprites off; status = $%02X", p.status)
+	}
+	// Sprite-0 hit must NOT fire (sprite layer suppressed).
+	if p.status&0x40 != 0 {
+		t.Errorf("sprite-0 hit set despite sprite-show off; status = $%02X", p.status)
+	}
+}
+
+// With ALL rendering disabled ($2001=$00) sprite evaluation does not run,
+// so the overflow flag stays clear even with 9 sprites on a line.
+func TestRenderSprites_RenderingDisabledNoOverflow(t *testing.T) {
+	cart := &fakeCart{}
+	loadSpriteTile(cart, 1)
+	p := New(cart, nil)
+	clearOAM(p)
+	p.Write(0x2001, 0x00) // all rendering off
 	for i := range 9 {
 		p.Write(0x2003, byte(i*4))
 		p.Write(0x2004, 63)
@@ -297,9 +326,6 @@ func TestRenderSprites_SpriteShowDisabledSuppressesEverything(t *testing.T) {
 	}
 	renderStaticFrame(p)
 	if p.status&0x20 != 0 {
-		t.Errorf("overflow set despite sprite-show off; status = $%02X", p.status)
-	}
-	if p.status&0x40 != 0 {
-		t.Errorf("sprite-0 hit set despite sprite-show off; status = $%02X", p.status)
+		t.Errorf("overflow set with rendering disabled; status = $%02X", p.status)
 	}
 }

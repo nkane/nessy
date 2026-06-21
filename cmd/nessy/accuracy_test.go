@@ -58,6 +58,14 @@ type accuracyROM struct {
 	// of a hard failure so CI stays green. Clear the field (+ delete
 	// the tracking issue) once the gap is fixed.
 	knownFail string
+	// resultAddr, when non-zero, grades a ROM that does NOT use the
+	// Blargg $6000 status shell — the older sprite_overflow_tests /
+	// dmc_dma style that reports by on-screen text + APU beeps and then
+	// parks in a tight self-loop. The harness runs to the park and reads
+	// this zero-page result byte: 1 = passed, any other value = the
+	// failed sub-test number (Blargg's beep convention). Mutually
+	// exclusive with the $6000 path.
+	resultAddr uint16
 }
 
 var accuracyROMs = []accuracyROM{
@@ -229,16 +237,19 @@ var accuracyROMs = []accuracyROM{
 		// by content hash since the header matches the rev-B test 5 ROM.
 	},
 	{
-		// Blargg sprite_overflow_tests (1.Basics representative). The
-		// whole suite hangs at init — never writes $6000 status even
-		// at 9000 frames. #12 expected these to PASS (chippy#283).
-		// Low frame cap: it never reports, so don't burn CI time.
-		name:      "sprite_overflow_basics.nes",
-		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_overflow_tests/1.Basics.nes",
-		sha:       "1a6782f63ccb3a3dd1aa6a24272036c9c3aa232c2d1ff0b21e872741a3ee4fe2",
-		pathEnv:   "CHIPPY_ACCURACY_SPRITE_OVERFLOW_BIN",
-		maxFrames: 600,
-		knownFail: "init hang — never writes $6000 status (9000-frame timeout); test shell never starts (#19)",
+		// Blargg sprite_overflow_tests (1.Basics representative). No
+		// $6000 shell — reports by on-screen text + APU beeps, then
+		// parks. Graded via runParkedResult on the zero-page result
+		// byte $F8 (1 = passed). 8 sub-tests; test 7 ($2001=$08, BG
+		// rendering only) pins that sprite evaluation — hence the
+		// overflow flag — runs when EITHER BG or sprites are enabled
+		// (#19, #12, chippy#283).
+		name:       "sprite_overflow_basics.nes",
+		url:        "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_overflow_tests/1.Basics.nes",
+		sha:        "1a6782f63ccb3a3dd1aa6a24272036c9c3aa232c2d1ff0b21e872741a3ee4fe2",
+		pathEnv:    "CHIPPY_ACCURACY_SPRITE_OVERFLOW_BIN",
+		maxFrames:  600,
+		resultAddr: 0x00F8,
 	},
 	{
 		// Blargg dmc_dma_during_read4 (dma_2007_read representative).
@@ -291,7 +302,13 @@ func TestAccuracy(t *testing.T) {
 				t.Fatalf("build %s: %v", rom.name, err)
 			}
 
-			status, text := runBlargg(bus, rom.maxFrames)
+			var status byte
+			var text string
+			if rom.resultAddr != 0 {
+				status, text = runParkedResult(bus, rom.maxFrames, rom.resultAddr)
+			} else {
+				status, text = runBlargg(bus, rom.maxFrames)
+			}
 			t.Logf("%s: status=$%02X\n%s", rom.name, status, text)
 			if status == 0 {
 				return // pass
@@ -302,6 +319,35 @@ func TestAccuracy(t *testing.T) {
 			t.Errorf("%s FAILED: status=$%02X\n%s", rom.name, status, text)
 		})
 	}
+}
+
+// runParkedResult grades a ROM that reports via on-screen text + APU
+// beeps (no $6000 shell): the Blargg sprite_overflow_tests / dmc_dma
+// generation. The test runs its sub-tests then parks in a tight
+// self-loop (e.g. `JMP *`) with a result code in zero page — 1 =
+// passed, otherwise the failed sub-test number. The runner steps until
+// the CPU parks (PC unchanged across a step) or the frame cap trips,
+// then reads resultAddr. Returns status 0 on pass ($result == 1), else
+// the raw result code as the "status" so the caller's gap-skip logic +
+// logging work unchanged.
+func runParkedResult(bus *nesBus, maxFrames int, resultAddr uint16) (byte, string) {
+	for f := 0; f < maxFrames; f++ {
+		target := bus.cpu.Cycles + accuracyCyclesPerFrame
+		for bus.cpu.Cycles < target && !bus.cpu.Halted {
+			pc := bus.cpu.PC
+			bus.cpu.Step()
+			// A tight self-loop (PC didn't move) = the test parked after
+			// reporting its result.
+			if bus.cpu.PC == pc {
+				res := bus.cpu.Bus.Read(resultAddr)
+				if res == 1 {
+					return 0, "passed (parked self-loop; result=1)"
+				}
+				return res, fmt.Sprintf("failed sub-test %d (parked; result byte $%02X)", res, res)
+			}
+		}
+	}
+	return 0xFF, "timed out before the test parked"
 }
 
 // runBlargg steps the bus until the ROM reports a finished status at
