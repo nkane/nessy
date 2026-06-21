@@ -147,14 +147,20 @@ func (p *PPU) prepareSpritesFor(line int) {
 			_ = p.busRead(sprPatternBase)
 		}
 	}()
-	if p.mask&0x10 == 0 {
-		return // sprites hidden: only the garbage A12 fetches run
-	}
 	// Drive the sprite-overflow flag ($2002 bit 5) through the 2C02's
 	// buggy evaluator (#283) for the line being evaluated. Real silicon
 	// evaluates line N's sprites during line N-1 (dots 65-256), so doing
 	// it here at the previous line's dot 257 matches hardware ordering.
+	// Sprite evaluation (hence overflow) runs whenever rendering is
+	// enabled — BG OR sprite show — so it is evaluated even with sprites
+	// hidden but BG on. prepareSpritesFor is only reached when rendering
+	// is enabled (bgTick's gate), so an unconditional call is correct.
+	// Blargg sprite_overflow_tests/1.Basics test 7 ($2001=$08, BG only)
+	// pins this (#19).
 	p.evaluateSpriteOverflow(line, spriteH)
+	if p.mask&0x10 == 0 {
+		return // sprites hidden: overflow still evaluated; skip unit fetch
+	}
 	for i := 0; i < 64 && p.sprCount < 8; i++ {
 		spriteY := int(p.oam[i*4+0]) + 1
 		if line < spriteY || line >= spriteY+spriteH {

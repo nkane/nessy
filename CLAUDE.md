@@ -227,6 +227,7 @@ job downloads + runs.
 | instr_test-v5.nes (all_instrs) | SKIP | test 3 fails at $AB LXA/ATX — unstable illegal, analog-noise dependent |
 | mmc3_test 1/2/3/4/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, scanline_timing (sprite-fetch A12 at dot 261), MMC3 (rev-B) |
 | mmc3_test 6 | PASS | MMC6 — rev-A IRQ counter (stuck-at-zero stays silent), selected by content hash since the header matches the rev-B test 5 ROM (#25) |
+| sprite_overflow_tests 1.Basics | 8/8 PASS | no $6000 shell — graded via `runParkedResult` on zero-page result $F8 (1=pass). test 7 ($2001=$08, BG-only) pins that sprite eval/overflow runs when BG OR sprites enabled (#19) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
@@ -234,6 +235,13 @@ guard — if it fires, a dummy-cycle template is wrong.
 `knownFail` string on a ROM = tracked gap; harness logs the status +
 skips so the existing PASS suite stays green. Real regression in a
 passing ROM still fails CI.
+
+Two grading paths in `accuracy_test.go`: the default `runBlargg` polls
+the `$6000` status shell; ROMs with a `resultAddr` set (the older
+sprite_overflow / dmc_dma generation that reports by screen + APU beeps,
+no `$6000`) use `runParkedResult` — run to the CPU's tight self-loop
+park, then read the zero-page result byte (1 = passed, else the failed
+sub-test number).
 
 ## v1.0 release epic
 
