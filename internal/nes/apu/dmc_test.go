@@ -58,10 +58,16 @@ func TestDMC_EnableLoadsByteCounter(t *testing.T) {
 		t.Errorf("$4015 bit 4 not set; got $%02X", got)
 	}
 
-	// Disable drains bytesRemaining.
+	// Disable drains bytesRemaining — but with a 2-3 CPU-cycle delay
+	// (MesenCE DeltaModulationChannel, #20), so it is NOT cleared on the
+	// same cycle as the write.
 	s.Write(0x4015, 0x00)
+	if a.dmc.bytesRemaining == 0 {
+		t.Errorf("$4015 disable cleared bytesRemaining immediately; want a 2-3 cycle delay")
+	}
+	a.Tick(4) // let the disable delay expire
 	if a.dmc.bytesRemaining != 0 {
-		t.Errorf("$4015 disable didn't clear bytesRemaining")
+		t.Errorf("$4015 disable didn't clear bytesRemaining after the delay")
 	}
 }
 

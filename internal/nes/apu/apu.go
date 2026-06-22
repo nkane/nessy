@@ -486,7 +486,7 @@ func (a *APU) Write(addr uint16, v byte) {
 		a.pulse2.setEnabled(v&0x02 != 0)
 		a.triangle.setEnabled(v&0x04 != 0)
 		a.noise.setEnabled(v&0x08 != 0)
-		a.dmc.setEnabled(v&0x10 != 0, a.dmcStaller)
+		a.dmc.setEnabled(v&0x10 != 0, a.dbgCycles&1 == 0)
 		// Writing $4015 also clears the DMC IRQ flag (per nesdev).
 		a.dmc.clearIRQ(a.irqSink)
 	}
@@ -592,8 +592,10 @@ func (a *APU) stepCPU() {
 	// sequencer needs the higher rate to reach audible
 	// frequencies.
 	a.triangle.tickTimer()
-	// DMC period timer ticks every CPU cycle. The fetch path may
-	// charge cpu.Stall cycles + assert IRQ at sample exhaustion.
+	// DMC cycle-delayed enable/disable (#20) pumps first, then the
+	// period timer. The fetch path may charge cpu.Stall cycles + assert
+	// IRQ at sample exhaustion.
+	a.dmc.processDelays(a.dmcStaller)
 	a.dmc.tickTimer(a.dmcBus, a.dmcStaller, a.irqSink)
 	// Sunsoft 5B audio expansion (#306) — only present when the cart
 	// is FME-7 with the audio half wired. Internally divides CPU

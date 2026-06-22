@@ -134,7 +134,11 @@ straddle the two:
   schedule a fetch.
 - **DMC enable schedules an initial fetch** when buffer is empty +
   bytes pending (Mesen `StartDmcTransfer` condition). Inits with
-  `bufferEmpty=true, silenced=true`.
+  `bufferEmpty=true, silenced=true`. The fetch is CYCLE-DELAYED
+  (`transferStartDelay` 2/3 by CPU parity, `processDelays`, #20) — a
+  `$4015` enable loads `bytesRemaining` (so bit 4 reads active) at once
+  but defers the DMA flag 2-3 cycles; a `$4015` disable defers zeroing
+  `bytesRemaining` by `disableDelay`. Matches MesenCE; see the #20 note.
 
 - **Per-dot rendering is the SOLE path** (epic #73, phase 4 #77). The
   PPU reproduces the 2C02 fetch pipeline one dot at a time (`perdot.go`):
@@ -210,36 +214,37 @@ The sprite pattern DATA is still fetched in one batch (rendering reads it
 next scanline regardless); only the A12 emission dot matters here. Fully
 spreading the 8 sprite slots across 257-320 is unnecessary for this test.
 
-### #20 — dmc_dma_during_read4 (diagnosed, NOT fixed): DMC start/stop delays
+### #20 — dmc_dma_during_read4: blocked on a chippy DMA-cycle fix
 
 `dma_2007_read.nes` has NO `$6000` shell and — unlike sprite_overflow —
-NEVER parks: it spins forever. The hang is a tight loop (PRG `$E062-$E076`):
-`STA $4015` (=$10, enable DMC) → NOP → `BIT $4015` → `BNE` back while the
-DMC-active bit (bit 4) is set. nessy reads `$10` (active) every iteration:
-`setEnabled(true)` loads `bytesRemaining = ($4013<<4)+1 ≥ 1` immediately,
-and `$4015` bit 4 = `bytesRemaining > 0`, so the read 2 cycles later is
-always active → infinite loop. The real exit is a precise DMA-start /
-IRQ-timing window the loop is calibrating against.
+NEVER parks: it spins forever in a tight loop (PRG `$E062-$E076`): a fixed
+delay → `STA $4015` (=$10, enable DMC, a **1-byte** sample) → NOP →
+`BIT $4015` → `BNE` back while the DMC-active bit (bit 4) is set. The loop
+exits only when, in the **~3-cycle window** between the enable and the
+read, the DMC's single-byte DMA steals its cycle and drives
+`bytesRemaining 1→0`. Traced state: at the `BIT` read `bytesRemaining=1`
+(just restarted) — nessy's DMA fetch lands LATER (during the next delay
+loop), so the read always sees bit 4 set. It is timing-calibrating
+against the exact DMC-DMA-steal cycle.
 
-**MesenCE reference (`Core/NES/APU/DeltaModulationChannel.cpp`):** the DMC
-enable/disable are CYCLE-DELAYED — nessy applies them immediately.
-- `SetEnabled(true)` when idle: `InitSample()` (loads bytesRemaining) +
-  `_transferStartDelay = 2 or 3` (CPU-cycle parity) — comment: "Allows
-  behavior to match dmc_dma_start_test." The actual DMA transfer starts
-  only when that delay expires (`Run`/`ProcessClock` ~line 288).
-- `SetEnabled(false)`: `_disableDelay = 2 or 3` before `bytesRemaining`
-  is zeroed — "Disabling takes effect with a 1 APU-cycle delay; if a DMA
-  starts during this window it's cancelled but still halts the CPU 1
-  cycle."
-- `GetStatus()` (`$4015` bit 4) = `bytesRemaining > 0` (same as nessy).
+**The DMC enable/disable cycle delays ARE now ported** (MesenCE
+`DeltaModulationChannel`, `dmc.go` `transferStartDelay` / `disableDelay`,
+2/3 by CPU parity, pumped by `processDelays`). Faithful + apu_test 8/8 +
+units green — a prerequisite, but it does NOT close #20: `bytesRemaining`
+is loaded immediately by `InitSample`, so the active bit reads set right
+after enable regardless of the start delay (both parities still never
+park).
 
-**Fix direction:** port `_transferStartDelay` + `_disableDelay` into
-`dmc.setEnabled` + a per-CPU-cycle countdown in the DMC `Run`, and gate
-the DMA-start / bytesRemaining-clear on them (the cycle-steal during the
-`$2007` read is what test 4 of this suite actually measures). High-risk
-DMA-timing surgery — gate on the full `apu_test` (8/8) + `dmc_dma_*` +
-`ppu_vbl_nmi` HARD GATE. Graded via the no-`$6000` path once it parks;
-currently `knownFail` (never parks → timeout).
+**The core fix is in chippy, not nessy.** *When* the DMC DMA halts and
+steals its cycle relative to the instruction stream is owned by
+`cpu.ProcessPendingDma` / `cpu/dma.go` (the getCycle/putCycle parity
+loop) in the pinned `github.com/nkane/chippy` dep — nessy only flags
+intent via `SetNeedDmcDma`. The "$2007 read is performed twice when a DMC
+DMA halts it" behavior this suite checks is likewise CPU-side. Closing
+#20 needs a chippy change (DMC-DMA steal-cycle alignment + the $2007
+re-read-on-halt), a chippy release, and a `go.mod` bump. Tracked as the
+chippy boundary on #20. The no-`$6000` `runParkedResult` grader applies
+once it parks; currently `knownFail`.
 
 ## Accuracy harness
 

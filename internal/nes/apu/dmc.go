@@ -46,6 +46,18 @@ type dmcChannel struct {
 	// shift bit (and triggers refill / output update).
 	timer uint16
 
+	// Cycle-delayed enable/disable (MesenCE DeltaModulationChannel,
+	// #20). A $4015 enable of an idle DMC loads bytesRemaining
+	// immediately (so $4015 bit 4 reads active right away) but defers
+	// the first DMA transfer by transferStartDelay CPU cycles; a $4015
+	// disable defers zeroing bytesRemaining by disableDelay cycles. The
+	// delays are 2 (even CPU cycle) / 3 (odd) — "to match
+	// dmc_dma_start_test" — and shift the whole sample timeline so the
+	// finish dot lands where dmc_dma_during_read4 calibrates. Pumped
+	// once per CPU cycle by processDelays.
+	transferStartDelay int
+	disableDelay       int
+
 	// IRQ pending flag. Set on bytes-remaining-reaches-zero with
 	// irqEnable + no loop. $4015 read clears.
 	irqPending bool
@@ -123,33 +135,65 @@ func (d *dmcChannel) writeReg3(v byte) {
 // restarting a sample mid-play). Disabling clears bytes-remaining
 // + the IRQ flag; output level + sample buffer survive.
 //
-// When enabling with the sample buffer empty + bytesRemaining > 0
-// after reload, immediately flag a DMA fetch via the CPU sink.
-// Mesen2 DeltaModulationChannel::SetEnabled delays this by 2-3 CPU
-// cycles depending on cycle parity; chippy fires inline since the
-// CPU's ProcessPendingDma drains on the next bus read regardless
-// and Blargg apu_test 7-dmc_basics test 19 cares only that the
-// fetch happens before the user-visible $4015 poll a few dozen
-// cycles later (#318).
-func (d *dmcChannel) setEnabled(on bool, staller DMCStaller) {
+// The DMA transfer itself is cycle-delayed (MesenCE
+// DeltaModulationChannel::SetEnabled, #20): an enable of an idle DMC
+// loads bytesRemaining now but schedules the first fetch
+// transferStartDelay cycles later (startDmcTransfer, via processDelays);
+// a disable defers zeroing bytesRemaining by disableDelay cycles. This
+// shifts the sample timeline by 2-3 cycles so dmc_dma_during_read4's
+// $4015-active poll loop converges. evenCycle is the CPU-cycle parity
+// at the $4015 write (2 cycles on even, 3 on odd).
+func (d *dmcChannel) setEnabled(on bool, evenCycle bool) {
 	d.enabled = on
 	if on {
 		if d.bytesRemaining == 0 {
 			d.currentAddr = d.sampleAddrBase
 			d.bytesRemaining = d.sampleLenBase
+			if d.bytesRemaining > 0 {
+				d.transferStartDelay = startDelayFor(evenCycle)
+			}
 		}
-		// Schedule a fetch immediately if the buffer is empty +
-		// bytes are pending (Mesen StartDmcTransfer condition). The
-		// existing leftover byte in the buffer plays out first if
-		// bufferEmpty is false; no fetch scheduled until that byte
-		// has been clocked through.
-		if d.bytesRemaining > 0 && d.bufferEmpty && staller != nil && !d.fetchPending {
-			d.fetchPending = true
-			d.recordDMA()
-			staller.SetNeedDmcDma()
+	} else if d.disableDelay == 0 {
+		d.disableDelay = startDelayFor(evenCycle)
+	}
+}
+
+// startDelayFor is the MesenCE 2-(even)/3-(odd) CPU-cycle delay.
+func startDelayFor(evenCycle bool) int {
+	if evenCycle {
+		return 2
+	}
+	return 3
+}
+
+// processDelays advances the cycle-delayed enable/disable by one CPU
+// cycle (MesenCE ProcessClock). Called once per CPU cycle from the APU.
+func (d *dmcChannel) processDelays(staller DMCStaller) {
+	if d.disableDelay > 0 {
+		d.disableDelay--
+		if d.disableDelay == 0 {
+			d.bytesRemaining = 0
+			// Abort a transfer that hasn't been handed to the CPU yet.
+			d.fetchPending = false
 		}
-	} else {
-		d.bytesRemaining = 0
+	}
+	if d.transferStartDelay > 0 {
+		d.transferStartDelay--
+		if d.transferStartDelay == 0 {
+			d.startDmcTransfer(staller)
+		}
+	}
+}
+
+// startDmcTransfer schedules the first DMA fetch once the start delay
+// expires: flag a fetch if the buffer is empty + bytes are pending
+// (MesenCE StartDmcTransfer condition). A leftover buffered byte plays
+// out first; no fetch is scheduled until it has clocked through.
+func (d *dmcChannel) startDmcTransfer(staller DMCStaller) {
+	if d.bytesRemaining > 0 && d.bufferEmpty && staller != nil && !d.fetchPending {
+		d.fetchPending = true
+		d.recordDMA()
+		staller.SetNeedDmcDma()
 	}
 }
 
