@@ -260,7 +260,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2",
 		pathEnv:   "CHIPPY_ACCURACY_DMC_DMA_BIN",
 		maxFrames: 600,
-		knownFail: "init hang — never writes $6000 status (9000-frame timeout) (#20)",
+		knownFail: "spins forever (no $6000 shell, never parks) in a $4015 DMC-active poll loop; needs MesenCE's cycle-delayed DMC enable/disable (_transferStartDelay / _disableDelay) — see CLAUDE #20 note (#20)",
 	},
 	{
 		// Blargg sprite_hit_tests 2005 (01.basics representative).

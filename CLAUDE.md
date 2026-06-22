@@ -210,6 +210,37 @@ The sprite pattern DATA is still fetched in one batch (rendering reads it
 next scanline regardless); only the A12 emission dot matters here. Fully
 spreading the 8 sprite slots across 257-320 is unnecessary for this test.
 
+### #20 — dmc_dma_during_read4 (diagnosed, NOT fixed): DMC start/stop delays
+
+`dma_2007_read.nes` has NO `$6000` shell and — unlike sprite_overflow —
+NEVER parks: it spins forever. The hang is a tight loop (PRG `$E062-$E076`):
+`STA $4015` (=$10, enable DMC) → NOP → `BIT $4015` → `BNE` back while the
+DMC-active bit (bit 4) is set. nessy reads `$10` (active) every iteration:
+`setEnabled(true)` loads `bytesRemaining = ($4013<<4)+1 ≥ 1` immediately,
+and `$4015` bit 4 = `bytesRemaining > 0`, so the read 2 cycles later is
+always active → infinite loop. The real exit is a precise DMA-start /
+IRQ-timing window the loop is calibrating against.
+
+**MesenCE reference (`Core/NES/APU/DeltaModulationChannel.cpp`):** the DMC
+enable/disable are CYCLE-DELAYED — nessy applies them immediately.
+- `SetEnabled(true)` when idle: `InitSample()` (loads bytesRemaining) +
+  `_transferStartDelay = 2 or 3` (CPU-cycle parity) — comment: "Allows
+  behavior to match dmc_dma_start_test." The actual DMA transfer starts
+  only when that delay expires (`Run`/`ProcessClock` ~line 288).
+- `SetEnabled(false)`: `_disableDelay = 2 or 3` before `bytesRemaining`
+  is zeroed — "Disabling takes effect with a 1 APU-cycle delay; if a DMA
+  starts during this window it's cancelled but still halts the CPU 1
+  cycle."
+- `GetStatus()` (`$4015` bit 4) = `bytesRemaining > 0` (same as nessy).
+
+**Fix direction:** port `_transferStartDelay` + `_disableDelay` into
+`dmc.setEnabled` + a per-CPU-cycle countdown in the DMC `Run`, and gate
+the DMA-start / bytesRemaining-clear on them (the cycle-steal during the
+`$2007` read is what test 4 of this suite actually measures). High-risk
+DMA-timing surgery — gate on the full `apu_test` (8/8) + `dmc_dma_*` +
+`ppu_vbl_nmi` HARD GATE. Graded via the no-`$6000` path once it parks;
+currently `knownFail` (never parks → timeout).
+
 ## Accuracy harness
 
 Live tracker: [#1](https://github.com/nkane/nessy/issues/1). Wire ROMs
