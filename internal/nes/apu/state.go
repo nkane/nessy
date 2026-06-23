@@ -84,22 +84,24 @@ type NoiseState struct {
 
 // DMCState mirrors dmcChannel.
 type DMCState struct {
-	Enabled        bool
-	IRQEnable      bool
-	Loop           bool
-	RateIdx        byte
-	Output         byte
-	SampleAddrBase uint16
-	SampleLenBase  uint16
-	CurrentAddr    uint16
-	BytesRemaining uint16
-	SampleBuffer   byte
-	BufferEmpty    bool
-	ShiftRegister  byte
-	BitsRemaining  byte
-	Silenced       bool
-	Timer          uint16
-	IRQPending     bool
+	Enabled            bool
+	IRQEnable          bool
+	Loop               bool
+	RateIdx            byte
+	Output             byte
+	SampleAddrBase     uint16
+	SampleLenBase      uint16
+	CurrentAddr        uint16
+	BytesRemaining     uint16
+	SampleBuffer       byte
+	BufferEmpty        bool
+	ShiftRegister      byte
+	BitsRemaining      byte
+	Silenced           bool
+	Timer              uint16
+	IRQPending         bool
+	TransferStartDelay int
+	DisableDelay       int
 }
 
 // SaveFullState copies the APU's mutable state into a FullState.
@@ -244,7 +246,9 @@ func (d *dmcChannel) save() DMCState {
 		SampleBuffer: d.sampleBuffer, BufferEmpty: d.bufferEmpty,
 		ShiftRegister: d.shiftRegister, BitsRemaining: d.bitsRemaining,
 		Silenced: d.silenced, Timer: d.timer,
-		IRQPending: d.irqPending,
+		IRQPending:         d.irqPending,
+		TransferStartDelay: d.transferStartDelay,
+		DisableDelay:       d.disableDelay,
 	}
 }
 
@@ -265,6 +269,8 @@ func (d *dmcChannel) load(s DMCState) {
 	d.silenced = s.Silenced
 	d.timer = s.Timer
 	d.irqPending = s.IRQPending
+	d.transferStartDelay = s.TransferStartDelay
+	d.disableDelay = s.DisableDelay
 }
 
 var errBadStateSize = errors.New("save-state payload size mismatch")
