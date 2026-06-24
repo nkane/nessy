@@ -210,10 +210,14 @@ type PPU struct {
 	// return their value AND update the latch. Open-bus quirks
 	// matter for ppu_open_bus.nes — see #272.
 	//
-	// Real silicon has per-bit DRAM-cell decay (~1 frame). We don't
-	// model the decay; latch holds the last value indefinitely. Good
-	// enough for every shipping ROM that probes the latch.
-	openBus byte
+	// Real silicon's open-bus is a capacitive latch with per-bit DRAM
+	// decay: a bit reads back as written only until its cell leaks,
+	// after which it reads 0. Modelled per-bit via openBusStamp (the
+	// frame each bit was last driven); a bit older than openBusDecayFrames
+	// decays to 0 on the next bus access. Blargg ppu_open_bus pins this
+	// (#17). Mirrors MesenCE NesPpu::SetOpenBus / ApplyOpenBus.
+	openBus      byte
+	openBusStamp [8]uint64
 
 	// Memory the PPU owns directly.
 	vram    [0x800]byte // 2 KiB nametable RAM
@@ -402,6 +406,51 @@ func (p *PPU) updateNMI() {
 	}
 }
 
+// openBusDecayFrames is how long (in frames) an undriven open-bus bit
+// holds before it decays to 0. MesenCE uses 3 — a deliberately
+// conservative estimate; real cells leak faster + per-bit.
+const openBusDecayFrames = 3
+
+// setOpenBus drives the bits selected by mask to value (refreshing each
+// one's decay stamp) and decays any unselected bit that has gone stale.
+// Mirrors MesenCE NesPpu::SetOpenBus.
+func (p *PPU) setOpenBus(mask, value byte) {
+	if mask == 0xFF {
+		p.openBus = value
+		for i := range p.openBusStamp {
+			p.openBusStamp[i] = p.frameCount
+		}
+		return
+	}
+	ob := uint16(p.openBus) << 8
+	m, v := mask, value
+	for i := 0; i < 8; i++ {
+		ob >>= 1
+		switch {
+		case m&1 != 0:
+			if v&1 != 0 {
+				ob |= 0x80
+			} else {
+				ob &^= 0x80
+			}
+			p.openBusStamp[i] = p.frameCount
+		case p.frameCount > p.openBusStamp[i]+openBusDecayFrames:
+			ob &^= 0x80 // stale bit decays to 0
+		}
+		v >>= 1
+		m >>= 1
+	}
+	p.openBus = byte(ob)
+}
+
+// applyOpenBus returns value with the mask-selected bits replaced by the
+// open-bus latch (after decay), and refreshes the bits this access
+// actually drives (~mask). Mirrors MesenCE NesPpu::ApplyOpenBus.
+func (p *PPU) applyOpenBus(mask, value byte) byte {
+	p.setOpenBus(^mask, value)
+	return value | (p.openBus & mask)
+}
+
 func (p *PPU) Read(addr uint16) byte {
 	reg := uint16(0x2000 | (addr & 0x0007))
 	p.recordEvent(eventRegRead, reg, 0)
@@ -412,7 +461,10 @@ func (p *PPU) Read(addr uint16) byte {
 		// from the live status register; bottom 5 bits come from
 		// the open-bus latch (real silicon doesn't drive them).
 		// Reading also clears vblank + the $2005/$2006 toggle.
-		out := (p.status & 0xE0) | (p.openBus & 0x1F)
+		// bits 5-7 driven by the status flags (fresh), bits 0-4 from the
+		// open-bus latch (subject to decay). applyOpenBus refreshes the
+		// driven bits' decay stamps.
+		out := p.applyOpenBus(0x1F, p.status&0xE0)
 		// 2C02 vblank-set race per Mesen2 NesPpu::UpdateStatusFlag:
 		// a $2002 read on the PPU clock immediately before vblank-set
 		// (scanline 241, dot 0) returns bit 7 clear AND latches
@@ -433,13 +485,15 @@ func (p *PPU) Read(addr uint16) byte {
 		// set cycle the line never stays high long enough for the CPU to
 		// latch the edge — the suppression race (#342).
 		p.updateNMI()
-		// Only the high 3 bits leave on the bus; latch's high 3
-		// bits get the status, low 5 unchanged.
-		p.openBus = (p.openBus & 0x1F) | (p.status & 0xE0)
 		return out
 	case 0x2004:
 		out := p.oam[p.oamAddr]
-		p.openBus = out
+		// The 2C02 OAM attribute byte (sprite byte 2) has bits 2-4
+		// unimplemented — they always read 0 (Blargg ppu_open_bus #10).
+		if p.oamAddr&0x03 == 0x02 {
+			out &= 0xE3
+		}
+		p.setOpenBus(0xFF, out)
 		return out
 	case 0x2007:
 		// $2007 reads are buffered: each read returns the previously
@@ -453,27 +507,27 @@ func (p *PPU) Read(addr uint16) byte {
 		addrV := p.v & 0x3FFF
 		if addrV >= 0x3F00 {
 			pal := p.busRead(addrV) & 0x3F
-			out = pal | (p.openBus & 0xC0)
+			// Palette reads drive only the 6 palette bits; bits 6-7 come
+			// from the open-bus latch (and decay).
+			out = p.applyOpenBus(0xC0, pal)
 			p.readBuf = p.busRead(addrV - 0x1000)
-			// Palette reads put the 6 palette bits on the bus.
-			p.openBus = (p.openBus & 0xC0) | pal
 		} else {
 			out = p.readBuf
 			p.readBuf = p.busRead(addrV)
-			p.openBus = out
+			p.setOpenBus(0xFF, out)
 		}
 		p.incVRAMAddr()
 		return out
 	}
 	// Write-only registers ($2000 / $2001 / $2003 / $2005 / $2006)
-	// return the open-bus latch verbatim.
-	return p.openBus
+	// return the open-bus latch (after applying decay).
+	return p.applyOpenBus(0xFF, 0)
 }
 
 // Write services CPU writes to mirrored PPU registers. Every write
 // updates the open-bus latch with the byte that just crossed the bus.
 func (p *PPU) Write(addr uint16, v byte) {
-	p.openBus = v
+	p.setOpenBus(0xFF, v)
 	reg := uint16(0x2000 | (addr & 0x0007))
 	p.recordEvent(eventRegWrite, reg, v)
 	p.checkRegBP(reg, true)

@@ -4,8 +4,8 @@ import "testing"
 
 // Reads from write-only registers ($2000 / $2001 / $2003 / $2005 /
 // $2006) return whatever last crossed the PPU bus (the "open-bus
-// latch"). Real silicon's DRAM-cell decay isn't modelled — the
-// latch holds indefinitely.
+// latch"). Per-bit DRAM decay is modelled (#17); the latch holds for
+// openBusDecayFrames before unrefreshed bits read 0.
 func TestOpenBus_WriteOnlyRegistersReturnLatch(t *testing.T) {
 	p := New(&fakeCart{}, nil)
 	// Any write seeds the latch.
@@ -65,5 +65,45 @@ func TestOpenBus_OAMReadUpdatesLatch(t *testing.T) {
 	// Next read of a write-only register should see $77.
 	if got := p.Read(0x2000); got != 0x77 {
 		t.Errorf("post-OAM open-bus = $%02X; want $77", got)
+	}
+}
+
+// Open-bus bits decay to 0 once they go unrefreshed for longer than
+// openBusDecayFrames (#17, Blargg ppu_open_bus test 3).
+func TestOpenBus_DecaysToZero(t *testing.T) {
+	p := New(&fakeCart{}, nil)
+	p.Write(0x2000, 0xFF) // latch = $FF, all bits stamped at frame 0
+	p.frameCount += openBusDecayFrames + 1
+	if got := p.Read(0x2000); got != 0x00 {
+		t.Errorf("open-bus after %d frames = $%02X; want $00 (decayed)", openBusDecayFrames+1, got)
+	}
+}
+
+// A refresh (any write) resets the decay clock, so a bit that was
+// re-driven within the window does NOT decay.
+func TestOpenBus_RefreshResetsDecay(t *testing.T) {
+	p := New(&fakeCart{}, nil)
+	p.Write(0x2000, 0xFF)
+	p.frameCount += openBusDecayFrames - 1
+	p.Write(0x2000, 0xFF) // refresh before decay
+	p.frameCount += openBusDecayFrames - 1
+	if got := p.Read(0x2000); got != 0xFF {
+		t.Errorf("refreshed open-bus = $%02X; want $FF (not decayed)", got)
+	}
+}
+
+// The 2C02 OAM attribute byte (sprite byte 2) has bits 2-4
+// unimplemented: a $2004 read with OAMADDR on an attribute byte returns
+// those bits clear regardless of what was written (#17, test 10).
+func TestOpenBus_OAMAttributeBitsReadZero(t *testing.T) {
+	p := New(&fakeCart{}, nil)
+	p.oam[2] = 0xFF       // sprite 0 attribute byte
+	p.Write(0x2003, 0x02) // OAMADDR = 2
+	got := p.Read(0x2004)
+	if got&0x1C != 0 {
+		t.Errorf("$2004 attribute read = $%02X; bits 2-4 must be 0", got)
+	}
+	if got != 0xE3 {
+		t.Errorf("$2004 attribute read = $%02X; want $E3 ($FF with bits 2-4 cleared)", got)
 	}
 }

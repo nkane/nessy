@@ -174,13 +174,13 @@ var accuracyROMs = []accuracyROM{
 		knownFail: "status $01 — OAM read/write stress timing gap (#18)",
 	},
 	{
-		// Blargg ppu_open_bus — PPU open-bus latch decay timer.
+		// Blargg ppu_open_bus — PPU open-bus latch + per-bit decay + the
+		// OAM attribute-byte read mask (11/11 PASS, #17).
 		name:      "ppu_open_bus.nes",
 		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/ppu_open_bus/ppu_open_bus.nes",
 		sha:       "d4208a3ff6340532dd0fced7f9d408d5b6585853a0ddc9c1f64ee1722ef08e67",
 		pathEnv:   "CHIPPY_ACCURACY_PPU_OPEN_BUS_BIN",
 		maxFrames: 2500,
-		knownFail: "status $03 — open-bus latch should decay to 0 within ~1s; decay timer not implemented (#17)",
 	},
 	// Blargg mmc3_test 1-6 — MMC3 scanline-IRQ counter + A12-edge
 	// clocking. Tests 1, 2, 3, 5 PASS since the PPU drives the VRAM
