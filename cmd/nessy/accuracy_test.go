@@ -260,7 +260,7 @@ var accuracyROMs = []accuracyROM{
 		sha:       "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2",
 		pathEnv:   "CHIPPY_ACCURACY_DMC_DMA_BIN",
 		maxFrames: 600,
-		knownFail: "spins forever (no $6000 shell, never parks) in a $4015 DMC-active poll loop calibrating the exact DMC-DMA-steal cycle. nessy-side DMC enable/disable delays are ported, but the core fix (DMA steal-cycle alignment + $2007 re-read-on-halt) is in chippy's ProcessPendingDma — see CLAUDE #20 note (#20)",
+		knownFail: "spins forever (no $6000 shell, never parks) in a $4015 DMC-active poll loop calibrating the exact DMC-DMA-steal cycle. nessy DMC delays + chippy needDummyRead (chippy#480) are done; the rest is the DMA-during-internal-reg-read glitch (ProcessDmaRead) — needs a chippy open-bus model (chippy#481) — see CLAUDE #20 note (#20)",
 	},
 	{
 		// Blargg sprite_hit_tests 2005 (01.basics representative).

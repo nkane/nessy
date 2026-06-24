@@ -235,16 +235,25 @@ is loaded immediately by `InitSample`, so the active bit reads set right
 after enable regardless of the start delay (both parities still never
 park).
 
-**The core fix is in chippy, not nessy.** *When* the DMC DMA halts and
-steals its cycle relative to the instruction stream is owned by
-`cpu.ProcessPendingDma` / `cpu/dma.go` (the getCycle/putCycle parity
-loop) in the pinned `github.com/nkane/chippy` dep — nessy only flags
-intent via `SetNeedDmcDma`. The "$2007 read is performed twice when a DMC
-DMA halts it" behavior this suite checks is likewise CPU-side. Closing
-#20 needs a chippy change (DMC-DMA steal-cycle alignment + the $2007
-re-read-on-halt), a chippy release, and a `go.mod` bump. Tracked as the
-chippy boundary on #20. The no-`$6000` `runParkedResult` grader applies
-once it parks; currently `knownFail`.
+**The core fix is in chippy, not nessy** — `cpu.ProcessPendingDma` /
+`cpu/dma.go` own *when* the DMC DMA halts/steals its cycle; nessy only
+flags intent via `SetNeedDmcDma`. Cross-repo progress:
+
+- **chippy #480 / PR nkane/chippy#482 (done):** ported Mesen's missing
+  `needDummyRead` cycle (halt → dummy read → DMC read; chippy was one
+  cycle short). Faithful + non-regressing, but does NOT converge
+  `dma_2007_read` on its own.
+- **chippy #481 (epic, open):** the DMA-during-internal-register-read
+  glitch (`ProcessDmaRead`). The `$4015` calibration loop's read coincides
+  with the DMC DMA, so its value is a bus conflict that needs a CPU-side
+  open-bus model + internal/external bus split + `$4016/$4017`
+  bit-deletion — infrastructure chippy lacks. Architectural addition, not
+  a port; a minimal `$4015`-only `Bus.Read` glitch was tried and did NOT
+  converge. Realistically needs a MesenCE cycle-by-cycle reference run.
+
+So #20 stays `knownFail` until chippy #481 lands + a chippy release + a
+`go.mod` bump. The no-`$6000` `runParkedResult` grader applies once it
+parks.
 
 ## Accuracy harness
 
