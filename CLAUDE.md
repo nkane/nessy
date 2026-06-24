@@ -273,6 +273,7 @@ job downloads + runs.
 | mmc3_test 1/2/3/4/5 | PASS | clocking, details (incl #7 "241 clocks/frame"), A12_clocking, scanline_timing (sprite-fetch A12 at dot 261), MMC3 (rev-B) |
 | mmc3_test 6 | PASS | MMC6 — rev-A IRQ counter (stuck-at-zero stays silent), selected by content hash since the header matches the rev-B test 5 ROM (#25) |
 | sprite_overflow_tests 1.Basics | 8/8 PASS | no $6000 shell — graded via `runParkedResult` on zero-page result $F8 (1=pass). test 7 ($2001=$08, BG-only) pins that sprite eval/overflow runs when BG OR sprites enabled (#19) |
+| ppu_open_bus | 11/11 PASS | per-bit open-bus DRAM decay (`setOpenBus`/`applyOpenBus`, decay >3 frames) + the OAM attribute-byte (sprite byte 2) bits-2-4-read-0 quirk (#17) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
