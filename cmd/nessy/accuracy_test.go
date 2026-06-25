@@ -164,14 +164,14 @@ var accuracyROMs = []accuracyROM{
 		maxFrames: 2500,
 	},
 	{
-		// Blargg oam_stress — heavier OAM read/write timing patterns.
-		// oam_read PASSes, so basic access works; this diverges.
+		// Blargg oam_stress — random OAM read/write patterns. PASSes once
+		// the OAM attribute byte (sprite byte 2) reads bits 2-4 as 0 — the
+		// same 2C02 quirk ppu_open_bus test 10 pins (#17 fixed both; #18).
 		name:      "oam_stress.nes",
 		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/oam_stress/oam_stress.nes",
 		sha:       "95882d72a7acabe928fd277e3b3e0372f21ef3d41e36d7d8fb17fc017a356f70",
 		pathEnv:   "CHIPPY_ACCURACY_OAM_STRESS_BIN",
 		maxFrames: 2500,
-		knownFail: "status $01 — OAM read/write stress timing gap (#18)",
 	},
 	{
 		// Blargg ppu_open_bus — PPU open-bus latch + per-bit decay + the
