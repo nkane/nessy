@@ -66,6 +66,16 @@ type accuracyROM struct {
 	// failed sub-test number (Blargg's beep convention). Mutually
 	// exclusive with the $6000 path.
 	resultAddr uint16
+	// terminalLoop, when non-zero, grades a self-calibrating ROM that has
+	// neither a $6000 shell nor a zero-page result byte (dmc_dma_during
+	// _read4's dma_2007_read): it spins in per-sub-test calibration loops
+	// that only ESCAPE to a final terminal hang when the timing under
+	// test is cycle-correct, otherwise looping forever. Pass = the CPU
+	// settles into the [lo, hi] terminal PC window. The window is the
+	// $E72F-$E735 `SEI / STA $2000 / JMP *` hang, validated cycle-for-
+	// cycle against MesenCE (#20 / chippy #493). Mutually exclusive with
+	// the other two paths.
+	terminalLoop [2]uint16
 }
 
 var accuracyROMs = []accuracyROM{
@@ -252,15 +262,22 @@ var accuracyROMs = []accuracyROM{
 		resultAddr: 0x00F8,
 	},
 	{
-		// Blargg dmc_dma_during_read4 (dma_2007_read representative).
-		// Hangs at init like sprite_overflow — no $6000 status at 9000
-		// frames. Low frame cap.
-		name:      "dmc_dma_2007_read.nes",
-		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/dmc_dma_during_read4/dma_2007_read.nes",
-		sha:       "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2",
-		pathEnv:   "CHIPPY_ACCURACY_DMC_DMA_BIN",
-		maxFrames: 600,
-		knownFail: "spins forever (no $6000 shell, never parks) in a $4015 DMC-active poll loop calibrating the exact DMC-DMA-steal cycle. nessy DMC delays + chippy needDummyRead (chippy#480) are done; the rest is the DMA-during-internal-reg-read glitch (ProcessDmaRead) — needs a chippy open-bus model (chippy#481) — see CLAUDE #20 note (#20)",
+		// Blargg dmc_dma_during_read4 (dma_2007_read representative). No
+		// $6000 shell, no zero-page result byte: per-sub-test DMC-active
+		// poll loops calibrate the exact DMC-DMA-steal cycle and spin
+		// forever unless the steal lands on the cycle-correct CPU cycle.
+		// When correct they escape to the $E72F-$E735 `SEI / STA $2000 /
+		// JMP *` terminal hang — graded by runTerminalLoop, validated
+		// cycle-for-cycle against MesenCE (#20). Closed by chippy #493
+		// (idle() polls ProcessPendingDma so a DMA halt drains on the
+		// taken-branch dummy-read cycle → 4-cycle steal → phase drift)
+		// plus the host-side DmaReadBus glitch formula (dmabus.go).
+		name:         "dmc_dma_2007_read.nes",
+		url:          "https://github.com/christopherpow/nes-test-roms/raw/master/dmc_dma_during_read4/dma_2007_read.nes",
+		sha:          "a2e0fa3f6f155cbe0b8c9517b2f6a57f1fd68f13711c11d6d2fe5676c522d7b2",
+		pathEnv:      "CHIPPY_ACCURACY_DMC_DMA_BIN",
+		maxFrames:    600,
+		terminalLoop: [2]uint16{0xE72F, 0xE735},
 	},
 	{
 		// Blargg sprite_hit_tests 2005 (01.basics representative).
@@ -304,9 +321,12 @@ func TestAccuracy(t *testing.T) {
 
 			var status byte
 			var text string
-			if rom.resultAddr != 0 {
+			switch {
+			case rom.terminalLoop != [2]uint16{}:
+				status, text = runTerminalLoop(bus, rom.maxFrames, rom.terminalLoop)
+			case rom.resultAddr != 0:
 				status, text = runParkedResult(bus, rom.maxFrames, rom.resultAddr)
-			} else {
+			default:
 				status, text = runBlargg(bus, rom.maxFrames)
 			}
 			t.Logf("%s: status=$%02X\n%s", rom.name, status, text)
@@ -319,6 +339,39 @@ func TestAccuracy(t *testing.T) {
 			t.Errorf("%s FAILED: status=$%02X\n%s", rom.name, status, text)
 		})
 	}
+}
+
+// runTerminalLoop grades a self-calibrating ROM (dmc_dma_during_read4's
+// dma_2007_read) that has no $6000 shell and no zero-page result byte.
+// It runs per-sub-test calibration loops that spin forever unless the
+// timing under test is cycle-correct, in which case it escapes to a
+// final terminal hang (`SEI / STA $2000 / JMP *`). The runner steps a
+// frame at a time, tracking the PC range covered each frame; once the
+// CPU is confined to the [lo, hi] terminal window for a whole frame it
+// has converged → pass (status 0). Frame-cap exhaustion → status 0xFE
+// (still spinning in a calibration loop = the timing-under-test is
+// wrong). The window is validated cycle-for-cycle against MesenCE, which
+// settles into the identical loop (#20 / chippy #493).
+func runTerminalLoop(bus *nesBus, maxFrames int, window [2]uint16) (byte, string) {
+	lo, hi := window[0], window[1]
+	for f := 0; f < maxFrames; f++ {
+		var seenLo, seenHi uint16 = 0xFFFF, 0
+		target := bus.cpu.Cycles + accuracyCyclesPerFrame
+		for bus.cpu.Cycles < target && !bus.cpu.Halted {
+			pc := bus.cpu.PC
+			if pc < seenLo {
+				seenLo = pc
+			}
+			if pc > seenHi {
+				seenHi = pc
+			}
+			bus.cpu.Step()
+		}
+		if seenLo >= lo && seenHi <= hi {
+			return 0, fmt.Sprintf("passed (converged to terminal loop $%04X-$%04X at frame %d)", seenLo, seenHi, f)
+		}
+	}
+	return 0xFE, fmt.Sprintf("timed out still spinning in a calibration loop (never reached terminal $%04X-$%04X) — DMA-steal timing wrong", lo, hi)
 }
 
 // runParkedResult grades a ROM that reports via on-screen text + APU
