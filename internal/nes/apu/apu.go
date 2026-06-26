@@ -202,7 +202,13 @@ func New() *APU {
 	a := &APU{
 		pulse2:    pulse2,
 		noise:     noiseChannel{lfsr: 1},
-		dmc:       dmcChannel{bufferEmpty: true, silenced: true, bitsRemaining: 8},
+		// timer starts at period (rate-1), not 0, so the DMC output unit
+		// doesn't clock on the very first CPU cycle — matching MesenCE
+		// DeltaModulationChannel::Reset (SetTimer(GetPeriod())). Starting
+		// at 0 fired the bit-boundary one cycle early, offsetting the DMC
+		// sample-playback phase by a bit-period and mis-timing the second
+		// dmc_dma_during_read4 steal (#493 / #20).
+		dmc:       dmcChannel{bufferEmpty: true, silenced: true, bitsRemaining: 8, timer: dmcRateLUT[0] - 1},
 		mode4Step: true,
 		// alternateTick starts true so that after the 8-cycle reset
 		// loop's stallTicks the APU's per-cycle parity check at $4017
@@ -486,7 +492,15 @@ func (a *APU) Write(addr uint16, v byte) {
 		a.pulse2.setEnabled(v&0x02 != 0)
 		a.triangle.setEnabled(v&0x04 != 0)
 		a.noise.setEnabled(v&0x08 != 0)
-		a.dmc.setEnabled(v&0x10 != 0, a.dbgCycles&1 == 0)
+		// evenCycle is in Mesen's cycle-count terms. chippy's stepCPU
+		// increments dbgCycles at the top, so dbgCycles is 1 ahead of
+		// Mesen's cycleCount at the equivalent write moment — Mesen-even
+		// ⟺ dbgCycles odd (same compensation as SetFrameCounter above).
+		// Passing the raw `==0` here inverted the 2/3-cycle start delay,
+		// landing the DMC-DMA halt one read late (on the next opcode
+		// fetch instead of the $4015 operand read) — the dmc_dma_during
+		// _read4 calibration loop then never converged (#20).
+		a.dmc.setEnabled(v&0x10 != 0, a.dbgCycles&1 == 1)
 		// Writing $4015 also clears the DMC IRQ flag (per nesdev).
 		a.dmc.clearIRQ(a.irqSink)
 	}
