@@ -214,46 +214,56 @@ The sprite pattern DATA is still fetched in one batch (rendering reads it
 next scanline regardless); only the A12 emission dot matters here. Fully
 spreading the 8 sprite slots across 257-320 is unnecessary for this test.
 
-### #20 — dmc_dma_during_read4: blocked on a chippy DMA-cycle fix
+### #20 — dmc_dma_during_read4: ROOT-CAUSED + FIXED (staged behind a chippy release)
 
-`dma_2007_read.nes` has NO `$6000` shell and — unlike sprite_overflow —
-NEVER parks: it spins forever in a tight loop (PRG `$E062-$E076`): a fixed
-delay → `STA $4015` (=$10, enable DMC, a **1-byte** sample) → NOP →
-`BIT $4015` → `BNE` back while the DMC-active bit (bit 4) is set. The loop
-exits only when, in the **~3-cycle window** between the enable and the
-read, the DMC's single-byte DMA steals its cycle and drives
-`bytesRemaining 1→0`. Traced state: at the `BIT` read `bytesRemaining=1`
-(just restarted) — nessy's DMA fetch lands LATER (during the next delay
-loop), so the read always sees bit 4 set. It is timing-calibrating
-against the exact DMC-DMA-steal cycle.
+`dma_2007_read.nes` has NO `$6000` shell and no zero-page result byte. It
+spins in per-sub-test calibration loops (e.g. PRG `$E06D-$E076`: countdown
+delay → `STA $4015` enable 1-byte DMC → `NOP` → `BIT $4015` → `BNE`) that
+only ESCAPE — to a final `$E72F-$E735` `SEI / STA $2000 / JMP *` terminal
+hang — when the DMC-DMA steal lands on the cycle-correct CPU cycle so its
+glitch makes the poll read bit 4 clear. Wrong timing ⇒ the loop period
+locks to the DMC sample period (zero phase drift) ⇒ spins forever.
 
-**The DMC enable/disable cycle delays ARE now ported** (MesenCE
-`DeltaModulationChannel`, `dmc.go` `transferStartDelay` / `disableDelay`,
-2/3 by CPU parity, pumped by `processDelays`). Faithful + apu_test 8/8 +
-units green — a prerequisite, but it does NOT close #20: `bytesRemaining`
-is loaded immediately by `InitSample`, so the active bit reads set right
-after enable regardless of the start delay (both parities still never
-park).
+**Root cause (chippy), found by a from-boot `(PC, cycle)` diff vs a
+headless MesenCE reference** (built `make core`/`pgohelper`; per-instruction
+trace hook on `NesCpu::Exec`). chippy + MesenCE were **bit-identical for
+62,741 instructions**, then diverged at one steal: chippy halted at the
+branch *target* (`$E062`, even cycle → 3-cycle steal), MesenCE on the
+taken-branch *dummy read* (`$E078`, odd → 4-cycle steal). chippy's
+`idle()` — used for the taken-branch dummy read (`branch()` →
+`c.idle(c.PC)`) and other dummy cycles — did **not** poll
+`ProcessPendingDma` the way `busRead` does, so a DMA halt armed into an
+idle cycle drained one cycle late. The earlier "cumulative cycle-parity
+offset" theory was FALSIFIED by the bit-identical prefix — it is a local
+halt-poll-point bug.
 
-**The core fix is in chippy, not nessy** — `cpu.ProcessPendingDma` /
-`cpu/dma.go` own *when* the DMC DMA halts/steals its cycle; nessy only
-flags intent via `SetNeedDmcDma`. Cross-repo progress:
+**Fix — chippy #493 / PR nkane/chippy#497:** `idle()` polls
+`ProcessPendingDma` when `needHalt` is set, mirroring `busRead` (gated by
+`nesCycle`, so Harte/Klaus/non-NES are untouched). Regression test
+`TestIdle_DrainsPendingDmaHalt`. With it, `dma_2007_read` reaches the same
+`$E72F` terminal as MesenCE.
 
-- **chippy #480 / PR nkane/chippy#482 (done):** ported Mesen's missing
-  `needDummyRead` cycle (halt → dummy read → DMC read; chippy was one
-  cycle short). Faithful + non-regressing, but does NOT converge
-  `dma_2007_read` on its own.
-- **chippy #481 (epic, open):** the DMA-during-internal-register-read
-  glitch (`ProcessDmaRead`). The `$4015` calibration loop's read coincides
-  with the DMC DMA, so its value is a bus conflict that needs a CPU-side
-  open-bus model + internal/external bus split + `$4016/$4017`
-  bit-deletion — infrastructure chippy lacks. Architectural addition, not
-  a port; a minimal `$4015`-only `Bus.Read` glitch was tried and did NOT
-  converge. Realistically needs a MesenCE cycle-by-cycle reference run.
+**nessy side (`cmd/nessy/dmabus.go`, `accuracy_test.go`):**
+- `dmaBus` wraps `*cpu.MMIO` (embeds it; `Read`/`Write` latch external open
+  bus, `ReadDma` added) installed via `processor.SetBus(...)` in
+  `buildNES`. Pure pass-through off the DMA path. `processDmcRead` ports
+  MesenCE `NesCpu::ProcessDmaRead` (halt `DmaDummyRead` captures the CPU
+  pending-read addr into `haltAddr`; on the `DmaDmcRead`, a `$4000-$401F`
+  halt redirects the fetch to `$4000 | (dmcAddr & $1F)`). Unit-tested
+  (`dmabus_test.go`).
+- DMC `setEnabled` parity fix (`apu.go`): `dbgCycles&1==1` (Mesen-even ⟺
+  `dbgCycles` odd, matching `SetFrameCounter`); DMC sample-timeline phase
+  (`timer` inits to `period-1`) — both in nessy PR #94.
+- **Grader**: no `$6000`, no result byte → `runTerminalLoop`
+  (`terminalLoop: [2]uint16{0xE72F, 0xE735}`). Pass = the CPU settles into
+  the terminal window (validated cycle-for-cycle against MesenCE);
+  frame-cap exhaustion = still spinning = fail.
 
-So #20 stays `knownFail` until chippy #481 lands + a chippy release + a
-`go.mod` bump. The no-`$6000` `runParkedResult` grader applies once it
-parks.
+**Status: PASSES against local chippy `main` + #497.** Staged behind a
+**temporary `go.mod` replace → `/Users/nkane/dev/chippy`** (the `idle()`
+fix is unreleased). To finish: merge chippy #497 → chippy release (v1.8.0)
+→ drop the `replace`, bump `require` to the tag. The accuracy row is
+already green; no knownFail.
 
 ## Accuracy harness
 
@@ -275,6 +285,7 @@ job downloads + runs.
 | sprite_overflow_tests 1.Basics | 8/8 PASS | no $6000 shell — graded via `runParkedResult` on zero-page result $F8 (1=pass). test 7 ($2001=$08, BG-only) pins that sprite eval/overflow runs when BG OR sprites enabled (#19) |
 | ppu_open_bus | 11/11 PASS | per-bit open-bus DRAM decay (`setOpenBus`/`applyOpenBus`, decay >3 frames) + the OAM attribute-byte (sprite byte 2) bits-2-4-read-0 quirk (#17) |
 | oam_read / oam_stress | PASS | $2003/$2004 OAMADDR/OAMDATA access; oam_stress's random R/W also leans on the attribute-byte bits-2-4-read-0 mask (#18, closed by #17) |
+| dmc_dma_during_read4 (dma_2007_read) | PASS | no $6000 / no result byte — graded via `runTerminalLoop` on the $E72F-$E735 terminal hang (validated vs MesenCE). Needs chippy #497 (`idle()` polls ProcessPendingDma → taken-branch dummy-read DMA halt → 4-cycle steal) + the `dmaBus` glitch formula (#20). **Staged behind the `go.mod` replace → local chippy until #497 releases.** |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
@@ -283,11 +294,14 @@ guard — if it fires, a dummy-cycle template is wrong.
 skips so the existing PASS suite stays green. Real regression in a
 passing ROM still fails CI.
 
-Two grading paths in `accuracy_test.go`: the default `runBlargg` polls
-the `$6000` status shell; ROMs with a `resultAddr` set (the older
-sprite_overflow / dmc_dma generation that reports by screen + APU beeps,
-no `$6000`) use `runParkedResult` — run to the CPU's tight self-loop
-park, then read the zero-page result byte (1 = passed, else the failed
+Three grading paths in `accuracy_test.go`: the default `runBlargg` polls
+the `$6000` status shell; ROMs with a `terminalLoop` window use
+`runTerminalLoop` (self-calibrating ROMs with no `$6000`/result byte that
+converge to a fixed terminal hang — dma_2007_read, #20); ROMs with a
+`resultAddr` set (the older sprite_overflow / dmc_dma generation that
+reports by screen + APU beeps, no `$6000`) use `runParkedResult` — run to
+the CPU's tight self-loop park, then read the zero-page result byte (1 =
+passed, else the failed
 sub-test number).
 
 ## v1.0 release epic

@@ -162,6 +162,12 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 	pp.SetRegion(timing)
 	ap.SetRegion(timing)
 
+	// Route the CPU's bus through dmaBus so DMA reads carry their
+	// cpu.DmaKind tag (chippy#481 DmaReadBus seam) and the 2A03 DMA-read
+	// internal-register conflict (#20) is reproduced. Pure pass-through
+	// for non-DMA reads, so normal play is byte-identical.
+	processor.SetBus(newDMABus(mmio, timing.CPUClockHz == nes.PAL.CPUClockHz))
+
 	// Wire master-clock-deadline PPU advance + flip PPU into cpuDriven
 	// mode so MMIO's Ticker fan-out stops double-advancing. CPU.read /
 	// write / idle now drive PPU dot-by-dot via the deadline contract,
