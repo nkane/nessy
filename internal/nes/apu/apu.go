@@ -200,8 +200,8 @@ type frameResetLog struct {
 func New() *APU {
 	pulse2 := pulseChannel{channelTwo: true}
 	a := &APU{
-		pulse2:    pulse2,
-		noise:     noiseChannel{lfsr: 1},
+		pulse2: pulse2,
+		noise:  noiseChannel{lfsr: 1},
 		// timer starts at period (rate-1), not 0, so the DMC output unit
 		// doesn't clock on the very first CPU cycle — matching MesenCE
 		// DeltaModulationChannel::Reset (SetTimer(GetPeriod())). Starting
