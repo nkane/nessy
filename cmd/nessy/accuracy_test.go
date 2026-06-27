@@ -66,6 +66,14 @@ type accuracyROM struct {
 	// failed sub-test number (Blargg's beep convention). Mutually
 	// exclusive with the $6000 path.
 	resultAddr uint16
+	// screenPass, when true, grades a visual-only ROM that prints its
+	// verdict to the PPU nametable as text (blargg's pre-$6000 generation
+	// whose font maps tile index == ASCII): cpu_timing_test6 shows
+	// "6502 TIMING TEST / OFFICIAL INSTRUCTIONS ONLY / PASSED". The
+	// harness runs to the CPU's park, decodes the nametable via
+	// $2006/$2007, and passes iff the screen text contains "PASSED" (and
+	// not "FAILED"). Mutually exclusive with the other paths (#21).
+	screenPass bool
 	// terminalLoop, when non-zero, grades a self-calibrating ROM that has
 	// neither a $6000 shell nor a zero-page result byte (dmc_dma_during
 	// _read4's dma_2007_read): it spins in per-sub-test calibration loops
@@ -280,26 +288,29 @@ var accuracyROMs = []accuracyROM{
 		terminalLoop: [2]uint16{0xE72F, 0xE735},
 	},
 	{
-		// Blargg sprite_hit_tests 2005 (01.basics representative).
-		// Visual-only ROM, predates the $6000 text-shell — reports
-		// PASS only on screen, so runBlargg can't read a status.
-		// Needs a framebuffer-based harness (#21). Low frame cap.
-		name:      "sprite_hit_basics.nes",
-		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/01.basics.nes",
-		sha:       "51819e8e502bd88fe3b7244198a074dbeef2e848f66c587be04b04f1f0d4bb52",
-		pathEnv:   "CHIPPY_ACCURACY_SPRITE_HIT_BIN",
-		maxFrames: 600,
-		knownFail: "visual-only ROM (2005 suite, pre-$6000-shell) — result shown on screen only; needs framebuffer harness (#21)",
+		// Blargg sprite_hit_tests 2005 (01.basics representative). Same
+		// generation as sprite_overflow_tests — no $6000 shell, reports
+		// on-screen + APU beeps, then parks in a tight self-loop with the
+		// result in zero-page $F8 (1 = passed, else the failed sub-test
+		// number). Graded via runParkedResult, not a framebuffer (#21).
+		name:       "sprite_hit_basics.nes",
+		url:        "https://github.com/christopherpow/nes-test-roms/raw/master/sprite_hit_tests_2005.10.05/01.basics.nes",
+		sha:        "51819e8e502bd88fe3b7244198a074dbeef2e848f66c587be04b04f1f0d4bb52",
+		pathEnv:    "CHIPPY_ACCURACY_SPRITE_HIT_BIN",
+		maxFrames:  600,
+		resultAddr: 0x00F8,
 	},
 	{
-		// cpu_timing_test6 — visual-only, no $6000 protocol. Needs the
-		// framebuffer harness (#21).
-		name:      "cpu_timing_test6.nes",
-		url:       "https://github.com/christopherpow/nes-test-roms/raw/master/cpu_timing_test6/cpu_timing_test.nes",
-		sha:       "6ab4fe8af23b12ca0dfccfc030de3d4069bf2498e3ef20ddcf1ca75555065b85",
-		pathEnv:   "CHIPPY_ACCURACY_CPU_TIMING6_BIN",
-		maxFrames: 600,
-		knownFail: "visual-only ROM — no $6000 protocol; needs framebuffer harness (#21)",
+		// cpu_timing_test6 — visual-only, no $6000 protocol. Prints
+		// "6502 TIMING TEST / OFFICIAL INSTRUCTIONS ONLY / PASSED" to the
+		// nametable, then parks. Graded via runScreenText (nametable
+		// verdict), not a framebuffer golden (#21).
+		name:       "cpu_timing_test6.nes",
+		url:        "https://github.com/christopherpow/nes-test-roms/raw/master/cpu_timing_test6/cpu_timing_test.nes",
+		sha:        "6ab4fe8af23b12ca0dfccfc030de3d4069bf2498e3ef20ddcf1ca75555065b85",
+		pathEnv:    "CHIPPY_ACCURACY_CPU_TIMING6_BIN",
+		maxFrames:  900,
+		screenPass: true,
 	},
 }
 
@@ -322,6 +333,8 @@ func TestAccuracy(t *testing.T) {
 			var status byte
 			var text string
 			switch {
+			case rom.screenPass:
+				status, text = runScreenText(bus, rom.maxFrames)
 			case rom.terminalLoop != [2]uint16{}:
 				status, text = runTerminalLoop(bus, rom.maxFrames, rom.terminalLoop)
 			case rom.resultAddr != 0:
@@ -339,6 +352,59 @@ func TestAccuracy(t *testing.T) {
 			t.Errorf("%s FAILED: status=$%02X\n%s", rom.name, status, text)
 		})
 	}
+}
+
+// runScreenText grades a visual-only ROM that prints its verdict to the
+// PPU nametable (blargg's pre-$6000 generation; font tile index ==
+// ASCII). It runs to the CPU's park (PC unchanged across a step), decodes
+// the $2000 nametable to text via $2006/$2007, and passes iff the screen
+// contains "PASSED" without "FAILED". Returns status 0 on pass, else 0xFD
+// with the decoded screen for the log.
+func runScreenText(bus *nesBus, maxFrames int) (byte, string) {
+	parked := false
+	for f := 0; f < maxFrames && !parked; f++ {
+		target := bus.cpu.Cycles + accuracyCyclesPerFrame
+		for bus.cpu.Cycles < target && !bus.cpu.Halted {
+			pc := bus.cpu.PC
+			bus.cpu.Step()
+			if bus.cpu.PC == pc {
+				parked = true
+				break
+			}
+		}
+	}
+	screen := decodeNametableText(bus)
+	if !parked {
+		return 0xFF, "timed out before the test parked\n" + screen
+	}
+	if strings.Contains(screen, "PASSED") && !strings.Contains(screen, "FAILED") {
+		return 0, "passed (nametable verdict)\n" + screen
+	}
+	return 0xFD, "no PASSED verdict on screen\n" + screen
+}
+
+// decodeNametableText reads the $2000 nametable through $2006/$2007 and
+// renders its 30×32 tile grid as text, mapping printable tile indices
+// (blargg font: tile == ASCII) to characters, others to spaces. The
+// $2007 read path is buffered, so one priming read is discarded first.
+func decodeNametableText(bus *nesBus) string {
+	bus.ppu.Read(0x2002) // reset the $2006 address latch
+	bus.ppu.Write(0x2006, 0x20)
+	bus.ppu.Write(0x2006, 0x00)
+	_ = bus.ppu.Read(0x2007) // prime the read buffer
+	var b strings.Builder
+	for r := 0; r < 30; r++ {
+		for c := 0; c < 32; c++ {
+			tile := bus.ppu.Read(0x2007)
+			if tile >= 0x20 && tile < 0x7F {
+				b.WriteByte(tile)
+			} else {
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // runTerminalLoop grades a self-calibrating ROM (dmc_dma_during_read4's
