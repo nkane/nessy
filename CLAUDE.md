@@ -285,7 +285,9 @@ job downloads + runs.
 | sprite_overflow_tests 1.Basics | 8/8 PASS | no $6000 shell — graded via `runParkedResult` on zero-page result $F8 (1=pass). test 7 ($2001=$08, BG-only) pins that sprite eval/overflow runs when BG OR sprites enabled (#19) |
 | ppu_open_bus | 11/11 PASS | per-bit open-bus DRAM decay (`setOpenBus`/`applyOpenBus`, decay >3 frames) + the OAM attribute-byte (sprite byte 2) bits-2-4-read-0 quirk (#17) |
 | oam_read / oam_stress | PASS | $2003/$2004 OAMADDR/OAMDATA access; oam_stress's random R/W also leans on the attribute-byte bits-2-4-read-0 mask (#18, closed by #17) |
-| dmc_dma_during_read4 (dma_2007_read) | PASS | no $6000 / no result byte — graded via `runTerminalLoop` on the $E72F-$E735 terminal hang (validated vs MesenCE). Needs chippy #497 (`idle()` polls ProcessPendingDma → taken-branch dummy-read DMA halt → 4-cycle steal) + the `dmaBus` glitch formula (#20). **Staged behind the `go.mod` replace → local chippy until #497 releases.** |
+| dmc_dma_during_read4 (dma_2007_read) | PASS | no $6000 / no result byte — graded via `runTerminalLoop` on the $E72F-$E735 terminal hang (validated vs MesenCE). chippy v1.8.0 `idle()` polls ProcessPendingDma → taken-branch dummy-read DMA halt → 4-cycle steal (#493/#497) + the host `dmaBus` glitch formula (#20) |
+| sprite_hit_tests 2005 (01.basics) | PASS | same generation as sprite_overflow — no $6000, parks with zero-page $F8 result (1=pass) → `runParkedResult` (#21) |
+| cpu_timing_test6 | PASS | visual-only — prints "6502 TIMING TEST / OFFICIAL INSTRUCTIONS ONLY / PASSED" to the nametable, then parks. Graded via `runScreenText`: decode the nametable ($2006/$2007, blargg font tile==ASCII), pass iff it contains "PASSED" (#21) |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
@@ -294,15 +296,16 @@ guard — if it fires, a dummy-cycle template is wrong.
 skips so the existing PASS suite stays green. Real regression in a
 passing ROM still fails CI.
 
-Three grading paths in `accuracy_test.go`: the default `runBlargg` polls
-the `$6000` status shell; ROMs with a `terminalLoop` window use
+Four grading paths in `accuracy_test.go`: the default `runBlargg` polls
+the `$6000` status shell; `screenPass` ROMs use `runScreenText` (visual-
+only ROMs that print a verdict to the nametable — decode tiles as ASCII,
+pass on "PASSED"; cpu_timing_test6, #21); `terminalLoop` ROMs use
 `runTerminalLoop` (self-calibrating ROMs with no `$6000`/result byte that
 converge to a fixed terminal hang — dma_2007_read, #20); ROMs with a
-`resultAddr` set (the older sprite_overflow / dmc_dma generation that
-reports by screen + APU beeps, no `$6000`) use `runParkedResult` — run to
-the CPU's tight self-loop park, then read the zero-page result byte (1 =
-passed, else the failed
-sub-test number).
+`resultAddr` set (the older sprite_overflow / sprite_hit / dmc_dma
+generation that reports by screen + APU beeps, no `$6000`) use
+`runParkedResult` — run to the CPU's tight self-loop park, then read the
+zero-page result byte (1 = passed, else the failed sub-test number).
 
 ## v1.0 release epic
 
