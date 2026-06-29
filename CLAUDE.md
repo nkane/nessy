@@ -305,6 +305,7 @@ job downloads + runs.
 | dmc_dma_during_read4 (dma_2007_read) | PASS | no $6000 / no result byte — graded via `runTerminalLoop` on the $E72F-$E735 terminal hang (validated vs MesenCE). chippy v1.8.0 `idle()` polls ProcessPendingDma → taken-branch dummy-read DMA halt → 4-cycle steal (#493/#497) + the host `dmaBus` glitch formula (#20) |
 | sprite_hit_tests 2005 (01.basics) | PASS | same generation as sprite_overflow — no $6000, parks with zero-page $F8 result (1=pass) → `runParkedResult` (#21) |
 | cpu_timing_test6 | PASS | visual-only — prints "6502 TIMING TEST / OFFICIAL INSTRUCTIONS ONLY / PASSED" to the nametable, then parks. Graded via `runScreenText`: decode the nametable ($2006/$2007, blargg font tile==ASCII), pass iff it contains "PASSED" (#21) |
+| mmc5test_v2 (Drag) | PASS | MMC5 (#6). Interactive — no $6000 / result byte / verdict text; boots to the "MMC5 CHR BANK TEST" menu + waits for input. Graded via `gradeScreenGolden`: step a fixed 450 frames, encode the framebuffer as an ascii-ramp grid (`asciiFrame`, shared with the demo-ascii goldens), diff vs `testdata/accuracy-screen/mmc5test_v2.nes.golden`. Frame-stable from frame 400. Regression gate for PRG-exec + CHR banking + nametable mapping + font render — the whole MMC5 PPU-integration surface (phases 1-2d, #57/#67-70; audio #56/#71). Regen the golden with `-asciiref-update` |
 
 The `instrCycles == accounted` panic in `cpu.Step` is a proven invariant
 guard — if it fires, a dummy-cycle template is wrong.
@@ -313,7 +314,7 @@ guard — if it fires, a dummy-cycle template is wrong.
 skips so the existing PASS suite stays green. Real regression in a
 passing ROM still fails CI.
 
-Four grading paths in `accuracy_test.go`: the default `runBlargg` polls
+Five grading paths in `accuracy_test.go`: the default `runBlargg` polls
 the `$6000` status shell; `screenPass` ROMs use `runScreenText` (visual-
 only ROMs that print a verdict to the nametable — decode tiles as ASCII,
 pass on "PASSED"; cpu_timing_test6, #21); `terminalLoop` ROMs use
@@ -322,7 +323,13 @@ converge to a fixed terminal hang — dma_2007_read, #20); ROMs with a
 `resultAddr` set (the older sprite_overflow / sprite_hit / dmc_dma
 generation that reports by screen + APU beeps, no `$6000`) use
 `runParkedResult` — run to the CPU's tight self-loop park, then read the
-zero-page result byte (1 = passed, else the failed sub-test number).
+zero-page result byte (1 = passed, else the failed sub-test number); and
+`screenGolden` ROMs use `gradeScreenGolden` (interactive ROMs with NO
+self-report at all — they boot, render a static screen, wait for input)
+— step a fixed `maxFrames`, encode the framebuffer with `asciiFrame`, and
+diff vs a committed `testdata/accuracy-screen/<name>.golden` (regen with
+`-asciiref-update`); a picture divergence is a rendering regression
+(mmc5test_v2, #6).
 
 ## v1.0 release epic
 

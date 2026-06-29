@@ -84,6 +84,18 @@ type accuracyROM struct {
 	// cycle against MesenCE (#20 / chippy #493). Mutually exclusive with
 	// the other two paths.
 	terminalLoop [2]uint16
+	// screenGolden, when true, grades an interactive ROM that has no
+	// self-reporting protocol at all — it boots, renders a static screen,
+	// and waits for input (Drag's mmc5test_v2 shows the "MMC5 CHR BANK
+	// TEST" menu). The harness steps a fixed maxFrames, encodes the
+	// framebuffer as a brightness-ramp ascii grid (asciiFrame, shared with
+	// the demo-ascii goldens), and diffs it against a committed golden at
+	// testdata/accuracy-screen/<name>.golden. A divergence is a rendering
+	// regression (PRG-exec / CHR banking / nametable mapping). Regenerate
+	// with -asciiref-update. The render must be frame-stable at maxFrames
+	// (verified: the v2 menu is bit-identical from frame 400 on). Mutually
+	// exclusive with the other paths (#6).
+	screenGolden bool
 }
 
 var accuracyROMs = []accuracyROM{
@@ -255,6 +267,23 @@ var accuracyROMs = []accuracyROM{
 		// by content hash since the header matches the rev-B test 5 ROM.
 	},
 	{
+		// Drag's mmc5test_v2 — the MMC5 mapper test (#6). Interactive: it
+		// boots, renders the "MMC5 CHR BANK TEST" menu (OBJ/BG pattern
+		// tables, bank-select order, the live CHR-bank readout), and waits
+		// for input — no $6000 / result-byte / verdict-text protocol. Graded
+		// by gradeScreenGolden: the rendered frame is diffed against a
+		// committed ascii-grid golden, so a regression in PRG-exec, CHR
+		// banking, nametable mapping, or font rendering trips it. Exercises
+		// the whole MMC5 PPU-integration surface that phases 1-2d wired
+		// (#57, #67-70). Frame-stable from frame 400; graded at 450.
+		name:         "mmc5test_v2.nes",
+		url:          "https://github.com/christopherpow/nes-test-roms/raw/master/mmc5test_v2/mmc5test.nes",
+		sha:          "f18f60a27cae9c00b51782caa3b77cf96a11e1c45e4323a9815474728e5b2980",
+		pathEnv:      "CHIPPY_ACCURACY_MMC5_BIN",
+		maxFrames:    450,
+		screenGolden: true,
+	},
+	{
 		// Blargg sprite_overflow_tests (1.Basics representative). No
 		// $6000 shell — reports by on-screen text + APU beeps, then
 		// parks. Graded via runParkedResult on the zero-page result
@@ -330,6 +359,11 @@ func TestAccuracy(t *testing.T) {
 				t.Fatalf("build %s: %v", rom.name, err)
 			}
 
+			if rom.screenGolden {
+				gradeScreenGolden(t, bus, rom)
+				return
+			}
+
 			var status byte
 			var text string
 			switch {
@@ -352,6 +386,46 @@ func TestAccuracy(t *testing.T) {
 			t.Errorf("%s FAILED: status=$%02X\n%s", rom.name, status, text)
 		})
 	}
+}
+
+// gradeScreenGolden grades an interactive ROM (screenGolden) by diffing
+// its rendered framebuffer against a committed ascii-grid golden. It
+// steps a fixed rom.maxFrames frames (the render must be frame-stable by
+// then), encodes the framebuffer with asciiFrame (the same brightness
+// ramp the demo-ascii goldens use), then compares to
+// testdata/accuracy-screen/<name>.golden — regenerating instead of
+// comparing when -asciiref-update is set. A divergence is an MMC5
+// rendering regression (PRG-exec, CHR banking, or nametable mapping).
+func gradeScreenGolden(t *testing.T, bus *nesBus, rom accuracyROM) {
+	t.Helper()
+	for f := 0; f < rom.maxFrames; f++ {
+		target := bus.cpu.Cycles + accuracyCyclesPerFrame
+		for bus.cpu.Cycles < target && !bus.cpu.Halted {
+			bus.cpu.Step()
+		}
+	}
+	got := asciiFrame(bus.ppu.FrameBuffer())
+
+	golden := filepath.Join("testdata", "accuracy-screen", rom.name+".golden")
+	if *asciiRefUpdate {
+		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", golden)
+		return
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden (run with -asciiref-update): %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("%s picture diverged from golden:\n--- got ---\n%s", rom.name, got)
+		return
+	}
+	t.Logf("%s: screen matches golden\n%s", rom.name, got)
 }
 
 // runScreenText grades a visual-only ROM that prints its verdict to the
