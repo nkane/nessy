@@ -1,0 +1,60 @@
+# nfpm config for nessy's Linux packages (.deb / .rpm / .apk).
+# https://nfpm.goreleaser.com
+#
+# Driven by the release workflow, once per arch:
+#   VERSION=<tag> ARCH=<amd64|arm64> BINDIR=<dir with the linux binaries> \
+#     nfpm package -f packaging/nfpm.yaml -p deb -t out/
+# (and -p rpm / -p apk). nfpm expands the ${VAR} references below.
+#
+# Unlike chippy (a static TUI binary with no runtime deps), the nessy
+# game binary dynamically links GL / X11 / ALSA, so each format declares
+# those — per-distro package names differ, hence the overrides.
+name: nessy
+arch: ${ARCH}
+version: ${VERSION}
+section: games
+priority: optional
+maintainer: Nick Kane <nkanedev@gmail.com>
+description: Cycle-accurate NES emulator (2A03 / 2C02) with a DAP debugger
+vendor: nkane
+homepage: https://github.com/nkane/nessy
+license: MIT
+
+depends:
+  - libgl1
+  - libx11-6
+  - libxcursor1
+  - libxinerama1
+  - libxi6
+  - libxrandr2
+  - libasound2
+
+overrides:
+  rpm:
+    depends:
+      - mesa-libGL
+      - libX11
+      - libXcursor
+      - libXinerama
+      - libXi
+      - libXrandr
+      - alsa-lib
+  apk:
+    depends:
+      - mesa-gl
+      - libx11
+      - libxcursor
+      - libxinerama
+      - libxi
+      - libxrandr
+      - alsa-lib
+
+contents:
+  - src: ${BINDIR}/nessy
+    dst: /usr/bin/nessy
+  - src: ${BINDIR}/nessy-record
+    dst: /usr/bin/nessy-record
+  - src: ./README.md
+    dst: /usr/share/doc/nessy/README.md
+  - src: ./LICENSE
+    dst: /usr/share/doc/nessy/LICENSE

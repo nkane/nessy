@@ -1,0 +1,272 @@
+name: release
+
+# Tag scheme: bare vX.Y.Z. nessy is an Ebiten CGO app, so — unlike chippy
+# (pure Go, CGO off, one runner cross-compiles all targets via goreleaser)
+# — it cannot cross-compile from a single runner, and goreleaser's OSS
+# build cannot ingest externally-built CGO binaries (the `prebuilt`
+# builder was removed; split/merge is Pro-only). So this hand-rolls the
+# release: a per-OS native build matrix, then a finalize job that archives,
+# checksums, cosign-signs (keyless OIDC), SBOMs (syft), packages
+# (.deb/.rpm/.apk via nfpm), and publishes the GitHub release. Homebrew +
+# AUR run only on stable tags. See docs/RELEASE.md.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the release + upload assets
+  id-token: write   # cosign keyless OIDC
+
+env:
+  EBITEN_APT: >-
+    libgl1-mesa-dev xorg-dev libasound2-dev libxcursor-dev
+    libxinerama-dev libxi-dev libxrandr-dev
+
+jobs:
+  # Native build per target — Ebiten CGO needs a matching runner.
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,    goos: darwin,  goarch: arm64, ext: '' }
+          - { os: macos-15-intel,  goos: darwin,  goarch: amd64, ext: '' }
+          - { os: ubuntu-latest,   goos: linux,   goarch: amd64, ext: '' }
+          - { os: ubuntu-24.04-arm, goos: linux,  goarch: arm64, ext: '' }
+          - { os: windows-latest,  goos: windows, goarch: amd64, ext: '.exe' }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Ebiten dev-libs (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $EBITEN_APT
+
+      - name: Build + archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          case "${{ matrix.goarch }}" in
+            amd64) ARCHLABEL=x86_64 ;;
+            *)     ARCHLABEL="${{ matrix.goarch }}" ;;
+          esac
+          NAME="nessy_${VERSION}_${{ matrix.goos }}_${ARCHLABEL}"
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          mkdir -p "stage/${NAME}"
+          # Game binary — Ebiten + CGO + the nessy build tag.
+          CGO_ENABLED=1 go build -tags=nessy -trimpath -ldflags "${LDFLAGS}" \
+            -o "stage/${NAME}/nessy${{ matrix.ext }}" ./cmd/nessy
+          # Headless recorder.
+          go build -trimpath -ldflags "${LDFLAGS}" \
+            -o "stage/${NAME}/nessy-record${{ matrix.ext }}" ./cmd/nessy-record
+          cp README.md LICENSE "stage/${NAME}/"
+
+          mkdir -p out
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            (cd stage && 7z a -tzip "../out/${NAME}.zip" "${NAME}") >/dev/null
+          else
+            tar -C stage -czf "out/${NAME}.tar.gz" "${NAME}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/*
+          retention-days: 3
+
+  # Collect archives → checksums + cosign + SBOM + nfpm → GitHub release.
+  release:
+    name: sign + package + publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6   # README/LICENSE + packaging/nfpm.yaml
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Install nfpm + envsubst
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          sudo apt-get update && sudo apt-get install -y gettext-base
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum nessy_* > checksums.txt
+
+      - name: cosign sign-blob (keyless) every artifact
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for f in nessy_* checksums.txt; do
+            cosign sign-blob --yes --bundle "${f}.cosign.bundle" "${f}"
+          done
+
+      - name: SPDX SBOM per archive
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for f in nessy_*.tar.gz nessy_*.zip; do
+            [ -e "$f" ] || continue
+            syft scan "file:${f}" -o spdx-json > "${f}.spdx.sbom.json"
+          done
+
+      - name: Linux packages (.deb / .rpm / .apk)
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"; VERSION="${TAG#v}"
+          for arch in amd64 arm64; do
+            case "$arch" in amd64) label=x86_64 ;; *) label="$arch" ;; esac
+            tarball="dist/nessy_${VERSION}_linux_${label}.tar.gz"
+            bindir="pkgbin/${arch}"
+            mkdir -p "$bindir"
+            tar -xzf "$tarball" -C "$bindir" --strip-components=1
+            # nfpm doesn't expand env vars in contents.src globs, so
+            # pre-expand the config with envsubst.
+            VERSION="$VERSION" ARCH="$arch" BINDIR="$bindir" \
+              envsubst < packaging/nfpm.yaml > "nfpm.${arch}.yaml"
+            for fmt in deb rpm apk; do
+              nfpm package -f "nfpm.${arch}.yaml" -p "$fmt" -t dist/
+            done
+          done
+          # Sign the packages too.
+          cd dist
+          for f in *.deb *.rpm *.apk; do
+            [ -e "$f" ] || continue
+            cosign sign-blob --yes --bundle "${f}.cosign.bundle" "${f}"
+          done
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PRE=""
+          case "$TAG" in *-*) PRE="--prerelease" ;; esac
+          gh release create "$TAG" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "nessy ${TAG}" \
+            --generate-notes \
+            $PRE
+
+  # Homebrew cask + AUR — stable tags only (a "-" in the tag = prerelease).
+  # The rc.1 smoke test is skipped here; these need the repo secrets.
+  homebrew:
+    name: homebrew cask
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: archive-darwin-*, path: dist, merge-multiple: true }
+      - name: Update the cask in nkane/homebrew-tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"; VERSION="${TAG#v}"
+          arm_tb="nessy_${VERSION}_darwin_arm64.tar.gz"
+          amd_tb="nessy_${VERSION}_darwin_x86_64.tar.gz"
+          arm_sha=$(sha256sum "dist/${arm_tb}" | cut -d' ' -f1)
+          amd_sha=$(sha256sum "dist/${amd_tb}" | cut -d' ' -f1)
+          base="https://github.com/nkane/nessy/releases/download/${TAG}"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/nkane/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/nessy.rb <<RUBY
+          cask "nessy" do
+            version "${VERSION}"
+
+            on_arm do
+              sha256 "${arm_sha}"
+              url "${base}/${arm_tb}"
+            end
+            on_intel do
+              sha256 "${amd_sha}"
+              url "${base}/${amd_tb}"
+            end
+
+            name "nessy"
+            desc "Cycle-accurate NES emulator (2A03 / 2C02) with a DAP debugger"
+            homepage "https://github.com/nkane/nessy"
+
+            binary "nessy"
+            binary "nessy-record"
+
+            # cosign-signed but not Apple-notarized → clear the quarantine xattr.
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{staged_path}/nessy"]
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{staged_path}/nessy-record"]
+            end
+          end
+          RUBY
+
+          cd tap
+          git config user.name "nessy-release-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add Casks/nessy.rb
+          git commit -m "brew: bump nessy to ${TAG}"
+          git push
+
+  aur:
+    name: AUR nessy-bin
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate PKGBUILD
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"; VERSION="${TAG#v}"
+          tb="nessy_${VERSION}_linux_x86_64.tar.gz"
+          url="https://github.com/nkane/nessy/releases/download/${TAG}/${tb}"
+          mkdir -p aur
+          cat > aur/PKGBUILD <<PKG
+          # Maintainer: Nick Kane <nkanedev at gmail dot com>
+          pkgname=nessy-bin
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="Cycle-accurate NES emulator (2A03 / 2C02) with a DAP debugger"
+          arch=('x86_64')
+          url="https://github.com/nkane/nessy"
+          license=('MIT')
+          depends=('libgl' 'libx11' 'libxcursor' 'libxinerama' 'libxi' 'libxrandr' 'alsa-lib')
+          provides=('nessy')
+          conflicts=('nessy')
+          source=("${url}")
+          sha256sums=('SKIP')
+          package() {
+            install -Dm755 "\${srcdir}/nessy_${VERSION}_linux_x86_64/nessy" "\${pkgdir}/usr/bin/nessy"
+            install -Dm755 "\${srcdir}/nessy_${VERSION}_linux_x86_64/nessy-record" "\${pkgdir}/usr/bin/nessy-record"
+            install -Dm644 "\${srcdir}/nessy_${VERSION}_linux_x86_64/LICENSE" "\${pkgdir}/usr/share/licenses/nessy/LICENSE"
+          }
+          PKG
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: nessy-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: nessy-release-bot
+          commit_email: bot@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "aur: bump nessy-bin to ${{ github.ref_name }}"

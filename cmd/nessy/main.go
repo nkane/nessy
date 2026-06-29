@@ -18,9 +18,20 @@ import (
 	"github.com/nkane/nessy/internal/nes"
 )
 
+// Release-stamp vars, overridden at build time via
+// -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
+// goreleaser sets these from the git tag; a plain `go build` leaves the
+// dev defaults.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	var (
 		romPath   = flag.String("rom", "", "iNES ROM path (positional arg also accepted)")
+		showVer   = flag.Bool("version", false, "print version, commit, and build date, then exit")
 		dbgPath   = flag.String("dbg", "", "cc65/ld65 .dbg symbol file (auto-detected as <rom>.dbg if omitted)")
 		dapPort   = flag.Int("dap-port", 14785, "DAP server TCP port; 0 disables the listener")
 		scale     = flag.Int("scale", 3, "integer window scale (3 → 768x720)")
@@ -35,6 +46,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("nessy %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
 
 	// CPU profile (optional). Starts before any heavy work so the
 	// Ebiten game loop's per-frame Update + Draw show up in the

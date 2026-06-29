@@ -31,14 +31,27 @@ import (
 	"github.com/nkane/nessy/internal/nes/ppu"
 )
 
+// Release-stamp vars, overridden at build time via goreleaser ldflags
+// (-X main.version=... etc.); a plain `go build` leaves the dev defaults.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	var (
 		romPath = flag.String("rom", "", "iNES ROM path (positional arg also accepted)")
 		frames  = flag.Int("frames", 180, "number of frames to record (60 = 1 second)")
 		script  = flag.String("script", "", "JSON input timeline; omit for no input")
 		out     = flag.String("o", "out.gif", "output file; .gif or .mp4 by extension")
+		showVer = flag.Bool("version", false, "print version, commit, and build date, then exit")
 	)
 	flag.Parse()
+	if *showVer {
+		fmt.Printf("nessy-record %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
 	if *romPath == "" && flag.NArg() == 1 {
 		*romPath = flag.Arg(0)
 	}

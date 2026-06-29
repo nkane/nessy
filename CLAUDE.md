@@ -26,8 +26,25 @@ monorepo at chippy v1.2.0 on 2026-05-31 (chippy#386).
   nessy-v:v`).
 - Last released: `v0.8.0` pre-carve. v0.9.x / v1.0.0 to follow under the
   v1.0 epic (#13).
-- Release pipeline modernisation tracked in #8 (mirror chippy's
-  goreleaser + cosign + homebrew tap + AUR shape).
+- **Release pipeline (#8) — DONE, hand-rolled** in
+  `.github/workflows/release.yml` (NOT goreleaser). chippy cross-compiles
+  every target on one runner with goreleaser because it's pure-Go
+  (`CGO_ENABLED=0`); **nessy is an Ebiten CGO app** — it can't
+  cross-compile from one runner, and goreleaser OSS can't ingest
+  externally-built CGO binaries (the `prebuilt` builder was removed,
+  split/merge is Pro-only). So the workflow builds each target **natively
+  in a per-OS matrix** (macos-latest+macos-13, ubuntu-latest+ubuntu-24.04
+  -arm, windows-latest), then a finalize job produces the same artifact
+  shape as chippy: archives + `checksums.txt`, keyless-cosign
+  `.cosign.bundle` on every artifact, syft SPDX SBOMs, `.deb`/`.rpm`/`.apk`
+  via `nfpm` (`packaging/nfpm.yaml`, with the GL/X11/ALSA runtime deps the
+  CGO binary needs), Homebrew cask → `nkane/homebrew-tap`, and AUR
+  `nessy-bin`. Homebrew + AUR run on **stable tags only** (a `-` in the tag
+  = prerelease → skipped, so an `-rc` tag is a secret-free smoke test).
+  Version stamped via `-X main.version/commit/date` (`-version` flag on
+  both `nessy` + `nessy-record`). Playbook: `docs/RELEASE.md`. Stable
+  releases need the `HOMEBREW_TAP_GITHUB_TOKEN` + `AUR_SSH_PRIVATE_KEY`
+  repo secrets.
 
 ## Docs are part of every PR
 
