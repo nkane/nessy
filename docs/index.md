@@ -25,6 +25,8 @@ NROM, MMC1, UxROM, CNROM, MMC3 (Sharp + NEC RevA), VRC2, VRC4, VRC6 + audio, VRC
 
 Headliners that now play: Super Mario Bros, Zelda 1, Final Fantasy, Metroid, Castlevania II + III JP, Mega Man 1-6, SMB3, Crisis Force, Gimmick!, Lagrange Point (silent).
 
+See [`mapper-compat`](mapper-compat.md) for the full per-mapper matrix with headliner ROMs and known gaps.
+
 ## In your browser
 
 [Try nessy in the browser](https://nkane.dev/chippy/playground/nessy/) — Ebiten js/wasm build with a default demo + drag-drop loader for your own ROMs.
@@ -34,4 +36,4 @@ Headliners that now play: Super Mario Bros, Zelda 1, Final Fantasy, Metroid, Cas
 - [v0.6 epic](https://github.com/nkane/chippy/issues/305)
 - [v0.7 OPLL FM synth](https://github.com/nkane/chippy/issues/315) — Lagrange Point's soundtrack.
 
-See [`install`](install.md) for binaries + build instructions, [`demos`](demos.md) for the homebrew ROM suite, and [`debugging`](debugging.md) for the DAP-attach workflow.
+See [`install`](install.md) for binaries + build instructions, [`demos`](demos.md) for the homebrew ROM suite, [`debugging`](debugging.md) for the DAP-attach workflow, and [`mapper-compat`](mapper-compat.md) for the per-mapper compatibility matrix.
