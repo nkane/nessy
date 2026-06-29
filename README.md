@@ -23,11 +23,34 @@ The `-tags=nessy` build tag is required — `cmd/nessy` pulls in
 [Ebiten](https://ebitengine.org/) for the game window, which needs CGO +
 X11 / GL dev headers on Linux that the default CI runners don't carry.
 
+### Homebrew (macOS)
+
+```sh
+brew install --cask nkane/tap/nessy
+```
+
+Clears the macOS quarantine xattr on install (the binary is cosign-signed
+but not Apple-notarized).
+
 ### Binary releases
 
-Per-OS archives ship on the [releases page](https://github.com/nkane/nessy/releases).
-Homebrew tap / AUR / signed artifacts land with v1.0.0
-([issue #8](https://github.com/nkane/nessy/issues/8)).
+Per-OS archives (linux / darwin / windows × amd64 / arm64) ship on the
+[releases page](https://github.com/nkane/nessy/releases), alongside
+`.deb` / `.rpm` / `.apk` packages and an [AUR](https://aur.archlinux.org/packages/nessy-bin)
+`nessy-bin` package. On Arch: `yay -S nessy-bin`.
+
+Every artifact is keyless-cosign-signed (`.cosign.bundle`) with an SPDX
+SBOM. Verify a download:
+
+```sh
+cosign verify-blob \
+  --certificate-identity=https://github.com/nkane/nessy/.github/workflows/release.yml@refs/tags/<TAG> \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  --bundle nessy_<VERSION>_linux_x86_64.tar.gz.cosign.bundle \
+  nessy_<VERSION>_linux_x86_64.tar.gz
+```
+
+See [`docs/RELEASE.md`](docs/RELEASE.md) for the release process.
 
 ## Controls
 
