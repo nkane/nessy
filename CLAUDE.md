@@ -331,6 +331,20 @@ diff vs a committed `testdata/accuracy-screen/<name>.golden` (regen with
 `-asciiref-update`); a picture divergence is a rendering regression
 (mmc5test_v2, #6).
 
+**Blargg `apu_mixer` is deliberately NOT in the suite (#5).** Its four
+ROMs (square/triangle/noise/dmc) cancel the channel-under-test against the
+DMC DAC to near silence and have NO programmatic `$6000` verdict — they
+print play/listen instructions and report "done" (status `$00` =
+*completed*, not *passed*), so a human ear is the oracle. Wiring them
+would falsely green regardless of mixer correctness. The non-linear-DAC
+behaviour they exercise is deterministic at `mixSample`, so it's pinned
+instead by property unit tests in `internal/nes/apu/mixer_test.go`
+(square cross-attenuation, tnd cross-attenuation, pulse/tnd group
+independence). The non-linear DAC itself shipped pre-#5 (`mixer.go` +
+`emitSample`); expansion chips (5B/VRC6/VRC7/MMC5) sum as post-DAC int16
+addends because they mix on the cart's analog out, not through the 2A03
+DAC — see the `emitSample` comment.
+
 ## v1.0 release epic
 
 [#13](https://github.com/nkane/nessy/issues/13) tracks the v1.0 work
