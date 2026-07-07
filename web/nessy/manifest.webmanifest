@@ -1,0 +1,19 @@
+{
+  "name": "nessy — NES emulator",
+  "short_name": "nessy",
+  "description": "Cycle-accurate NES emulator running in the browser via Go js/wasm + Ebiten.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

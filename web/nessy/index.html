@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#111111" />
 <title>nessy — NES emulator in the browser</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
 <style>
   body {
     margin: 0;
@@ -25,13 +28,21 @@
     margin: 16px 0;
     background: #000;
     border: 1px solid #333;
+    min-width: 768px;
+    min-height: 720px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
+  #canvas-host.drag { border-color: #6cf; box-shadow: 0 0 0 2px #6cf inset; }
+  #canvas-host:fullscreen { border: 0; }
   .controls {
     display: flex;
     gap: 12px;
     align-items: center;
     flex-wrap: wrap;
     justify-content: center;
+    max-width: 768px;
   }
   .controls button, .controls label {
     background: #222;
@@ -41,15 +52,25 @@
     padding: 8px 14px;
     cursor: pointer;
   }
+  .controls button:hover, .controls label:hover { background: #2c2c2c; }
   .controls input[type=file] { display: none; }
+  #slots { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+  .slot { display: flex; gap: 6px; align-items: center; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 4px; padding: 6px 8px; }
+  .slot span { color: #aaa; }
+  .slot button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 3px; padding: 4px 10px; cursor: pointer; }
+  .slot button:disabled { opacity: .4; cursor: default; }
+  .slot button.filled { border-color: #6c6; }
+  #gamepad-state { color: #888; margin-top: 8px; }
   pre.help {
-    margin-top: 24px;
+    margin-top: 20px;
     color: #888;
     background: #1a1a1a;
     padding: 12px 16px;
     border-radius: 4px;
     border: 1px solid #2a2a2a;
     line-height: 1.5;
+    max-width: 768px;
+    white-space: pre-wrap;
   }
   a { color: #6cf; }
 </style>
@@ -65,51 +86,25 @@
       Load ROM…
       <input id="rom-picker" type="file" accept=".nes" />
     </label>
+    <button id="fullscreen-btn" type="button">Fullscreen</button>
+    <button id="shot-btn" type="button">Screenshot</button>
+    <button id="remap-btn" type="button">Remap keys</button>
     <span id="status">loading…</span>
   </div>
 
-  <pre class="help">Keyboard:
-  Arrows — D-pad
-  Z / X  — A / B
-  Enter  — Start
-  RShift — Select
+  <div id="slots"></div>
+  <div id="gamepad-state">gamepad: none</div>
 
-This page boots a default homebrew demo. Use "Load ROM…" to swap
-in your own .nes file. The ROM stays in your browser — nothing is
-uploaded.</pre>
+  <pre class="help">Keyboard (default):
+  Arrows — D-pad     Z / X — A / B     Enter — Start     RShift — Select
+  F1–F4 — save slot 1–4     Shift+F1–F4 — load slot 1–4
+
+Drop a .nes file onto the screen (or "Load ROM…") to play your own game —
+it stays in your browser, nothing is uploaded. Save slots persist across
+reloads (IndexedDB). Gamepads use the standard mapping; "Remap keys" binds
+a custom keyboard layout. Installable + works offline (PWA).</pre>
 
   <script src="wasm_exec.js"></script>
-  <script>
-    (async () => {
-      const status = document.getElementById('status');
-      status.textContent = 'fetching wasm…';
-      const go = new Go();
-      const resp = await fetch('nessy.wasm');
-      const result = await WebAssembly.instantiateStreaming(resp, go.importObject);
-      status.textContent = 'starting emulator…';
-      go.run(result.instance); // Ebiten owns the event loop after this.
-
-      // Ebiten mounts its canvas into document.body by default; move
-      // it into our host div + size it to 3× native NES resolution
-      // (256×240 → 768×720).
-      const wait = setInterval(() => {
-        const cv = document.querySelector('canvas');
-        if (!cv) return;
-        clearInterval(wait);
-        document.getElementById('canvas-host').appendChild(cv);
-        cv.style.width = '768px';
-        cv.style.height = '720px';
-        status.textContent = 'running default demo';
-      }, 50);
-
-      document.getElementById('rom-picker').addEventListener('change', async (e) => {
-        const f = e.target.files[0];
-        if (!f) return;
-        const buf = new Uint8Array(await f.arrayBuffer());
-        const msg = nessy.loadROM(buf);
-        status.textContent = (msg === 'ok') ? `loaded ${f.name}` : `error: ${msg}`;
-      });
-    })();
-  </script>
+  <script src="app.js"></script>
 </body>
 </html>

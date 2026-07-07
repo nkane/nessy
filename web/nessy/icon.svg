@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#111"/>
+  <rect x="96" y="160" width="320" height="192" rx="24" fill="#1e1e1e" stroke="#444" stroke-width="8"/>
+  <!-- D-pad -->
+  <rect x="150" y="236" width="60" height="20" rx="4" fill="#6cf"/>
+  <rect x="170" y="216" width="20" height="60" rx="4" fill="#6cf"/>
+  <!-- A / B buttons -->
+  <circle cx="320" cy="256" r="16" fill="#6c6"/>
+  <circle cx="362" cy="256" r="16" fill="#6c6"/>
+  <text x="256" y="420" font-family="monospace" font-size="64" font-weight="bold"
+        fill="#ddd" text-anchor="middle">nessy</text>
+</svg>

@@ -59,6 +59,7 @@ type bus struct {
 	joy  *joypad.Port
 	apu  *apu.APU
 	mmio *cpu.MMIO
+	ram  *cpu.RAM
 	cart cart.Cartridge
 }
 
@@ -131,14 +132,32 @@ func buildBus(rom *nes.ROM) (*bus, error) {
 		return nil, err
 	}
 	processor.Reset()
-	return &bus{cpu: processor, ppu: pp, joy: jp, apu: ap, mmio: mmio, cart: c}, nil
+	return &bus{cpu: processor, ppu: pp, joy: jp, apu: ap, mmio: mmio, ram: ram, cart: c}, nil
 }
 
-type game struct{ bus *bus }
+// game holds the live bus plus the JS-injected controller state. pad is
+// written by the nessy.setButton API (gamepad polling + remapped keys on
+// the JS side) and OR'd with the Ebiten keyboard each Update, so the
+// default keys keep working with no config. Indexed by joypad.Button
+// (A,B,Select,Start,Up,Down,Left,Right = 0..7). romHash keys save slots.
+type game struct {
+	bus     *bus
+	pad     [8]bool
+	romHash string
+	// keyboardOn gates the built-in Ebiten keymap. JS turns it off when
+	// the user saves a custom keyboard remap so the shell can fully own
+	// keyboard input via setButton; on (default) the built-in
+	// arrows/Z/X/Enter/RShift work with no configuration.
+	keyboardOn bool
+}
 
 func (g *game) Update() error {
 	for _, m := range keyMap {
-		g.bus.joy.P1.Set(m.btn, ebiten.IsKeyPressed(m.key))
+		down := g.pad[m.btn]
+		if g.keyboardOn {
+			down = down || ebiten.IsKeyPressed(m.key)
+		}
+		g.bus.joy.P1.Set(m.btn, down)
 	}
 	target := g.bus.cpu.Cycles + cpuCyclesPerFrame
 	for g.bus.cpu.Cycles < target && !g.bus.cpu.Halted {
@@ -157,12 +176,19 @@ func (g *game) Draw(screen *ebiten.Image) {
 
 func (g *game) Layout(_, _ int) (int, int) { return ppu.ScreenWidth, ppu.ScreenHeight }
 
-// installAPI exposes a "nessy" object on the JS side with a single
-// loadROM(Uint8Array) method that swaps the running bus. The game
-// goroutine's next Update tick picks up the new bus pointer via
-// the shared atomic field; concurrent writes are gated by the
-// browser's single-thread model (JS calls don't run during
-// requestAnimationFrame's Update).
+// installAPI exposes the "nessy" object on the JS side. All methods run
+// on the browser's single thread, which never interleaves with Ebiten's
+// requestAnimationFrame Update — so they mutate the game/bus directly
+// without locking. The JS shell (web/nessy/app.js) drives:
+//   - loadROM(Uint8Array)   → swap the running ROM; returns "ok" or error.
+//   - setButton(idx, down)  → gamepad / remapped-key input (idx 0..7 =
+//     A,B,Select,Start,Up,Down,Left,Right); OR'd with the keyboard.
+//   - romHash()             → current ROM's SHA-256 hex (save-slot key).
+//   - setKeyboard(on)       → toggle the built-in keymap (off = JS owns
+//     keyboard for a custom remap).
+//   - screenshot()          → Uint8Array of the 256×240 RGBA framebuffer.
+//   - saveState()           → Uint8Array snapshot, or null on error.
+//   - loadState(Uint8Array) → restore a snapshot; "ok" or error string.
 func installAPI(g *game) {
 	js.Global().Set("nessy", js.ValueOf(map[string]any{
 		"loadROM": js.FuncOf(func(this js.Value, args []js.Value) any {
@@ -180,6 +206,59 @@ func installAPI(g *game) {
 				return js.ValueOf(fmt.Sprintf("build: %v", err))
 			}
 			g.bus = b
+			g.romHash = romHashHex(data)
+			g.pad = [8]bool{} // drop any held buttons across the swap
+			return js.ValueOf("ok")
+		}),
+		"setButton": js.FuncOf(func(this js.Value, args []js.Value) any {
+			if len(args) < 2 {
+				return js.ValueOf(false)
+			}
+			idx := args[0].Int()
+			if idx < 0 || idx >= len(g.pad) {
+				return js.ValueOf(false)
+			}
+			g.pad[idx] = args[1].Truthy()
+			return js.ValueOf(true)
+		}),
+		"romHash": js.FuncOf(func(this js.Value, args []js.Value) any {
+			return js.ValueOf(g.romHash)
+		}),
+		"setKeyboard": js.FuncOf(func(this js.Value, args []js.Value) any {
+			if len(args) < 1 {
+				return js.ValueOf(g.keyboardOn)
+			}
+			g.keyboardOn = args[0].Truthy()
+			return js.ValueOf(g.keyboardOn)
+		}),
+		"screenshot": js.FuncOf(func(this js.Value, args []js.Value) any {
+			// Return the raw 256×240 RGBA framebuffer. JS paints it to an
+			// offscreen canvas → PNG. Pulling pixels from the core avoids
+			// the empty-readback of Ebiten's WebGL canvas (no
+			// preserveDrawingBuffer).
+			fb := g.bus.ppu.FrameBuffer()
+			out := js.Global().Get("Uint8Array").New(len(fb))
+			js.CopyBytesToJS(out, fb)
+			return out
+		}),
+		"saveState": js.FuncOf(func(this js.Value, args []js.Value) any {
+			data, err := captureState(g.bus, g.romHash)
+			if err != nil {
+				return js.Null()
+			}
+			out := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(out, data)
+			return out
+		}),
+		"loadState": js.FuncOf(func(this js.Value, args []js.Value) any {
+			if len(args) < 1 {
+				return js.ValueOf("nessy.loadState(bytes): missing argument")
+			}
+			data := make([]byte, args[0].Length())
+			js.CopyBytesToGo(data, args[0])
+			if err := applyState(g.bus, data, g.romHash); err != nil {
+				return js.ValueOf(fmt.Sprintf("load: %v", err))
+			}
 			return js.ValueOf("ok")
 		}),
 	}))
@@ -194,7 +273,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("build bus: %w", err))
 	}
-	g := &game{bus: b}
+	g := &game{bus: b, romHash: romHashHex(defaultROM), keyboardOn: true}
 	installAPI(g)
 	ebiten.SetWindowSize(ppu.ScreenWidth*3, ppu.ScreenHeight*3)
 	ebiten.SetWindowTitle("nessy")

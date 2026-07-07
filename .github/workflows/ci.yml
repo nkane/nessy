@@ -170,6 +170,12 @@ jobs:
           GOARCH: wasm
         run: go build -o /tmp/nessy.wasm ./cmd/nessy-wasm
 
+      - name: Check playground shell (JS syntax + manifest JSON)
+        run: |
+          node --check web/nessy/app.js
+          node --check web/nessy/service-worker.js
+          node -e "JSON.parse(require('fs').readFileSync('web/nessy/manifest.webmanifest','utf8'))"
+
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
