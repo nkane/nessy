@@ -188,10 +188,10 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
-  # Perf regression gate — slot wired, test pending #11. nessy needs its
-  # own benchmark (PPU.Run / DMC fetch hot paths); chippy's perfgate lived
-  # in cpu/, now the library dep. Until #11 lands a perfgate-tagged
-  # TestPerfGate, this runs vacuously green.
+  # Perf regression gate (#11). Runs the per-frame emulation benchmarks in
+  # cmd/nessy-record (headless — no Ebiten) and fails on a >10% ns/frame
+  # regression vs the committed ubuntu-latest baseline. Baseline + reseed
+  # recipe: docs/perf-baseline.md.
   perfgate:
     name: perf baseline
     runs-on: ubuntu-latest
@@ -205,4 +205,7 @@ jobs:
           cache: true
 
       - name: Run perf gate (#11)
-        run: go test -tags=perfgate -timeout 5m -run TestPerfGate ./...
+        # -v so the per-frame ns + realtime-multiple headroom lines show in
+        # the job log (they're t.Logf, suppressed without -v on a pass) —
+        # visible to reviewers + used to reseed the baseline (docs/perf-baseline.md).
+        run: go test -tags=perfgate -v -timeout 5m -run TestPerfGate ./...

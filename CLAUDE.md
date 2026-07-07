@@ -392,6 +392,19 @@ chippy version pulls in new CPU core fixes; the public packages used:
 Public API surface stability: chippy uses semver. Pin a tagged version;
 breaking changes show up as major bumps.
 
+## Perf gate (#11)
+
+`cmd/nessy-record/perfgate_test.go` (`//go:build perfgate`) benchmarks the
+steady-state per-frame emulation cost (the per-cycle CPU↔PPU interleave +
+per-dot render + APU tick + mapper IRQ) on three committed demo ROMs
+(`hello-bg` BG, `oam-grid` sprites, `mmc3-split` IRQ+scroll). `TestPerfGate`
+fails on a >10% ns/frame regression vs the committed ceiling in
+`testdata/perf-baseline.json` (tolerance 1.10). Headless — no Ebiten — so
+CI's `perf baseline` job runs it with a plain `-tags=perfgate`. **The
+baseline is hardware-absolute and MUST be reseeded from ubuntu-latest CI,
+never a dev machine** (Apple Silicon runs ~5× realtime, far tighter than
+the runner can meet). Reseed recipe: `docs/perf-baseline.md`.
+
 ## When in doubt
 
 - Ask before destructive git ops (force-push, reset --hard, branch -D).
