@@ -47,9 +47,10 @@ in-flight perf work):
    CI run — each line is `BenchmarkFrame_X: <N> ns/frame (...)`.
 2. Set each `ns_op_max` in `testdata/perf-baseline.json` to that observed
    `N`, rounded up ~5% to absorb shared-runner noise. With the 1.10 gate
-   tolerance on top, a clean run then sits ~15% under the fail line —
-   enough margin that runner jitter alone won't trip it, while a real
-   >10% regression still does.
+   tolerance on top, the effective fail line is ~1.15× a clean run: a
+   genuine regression (comfortably past the ~5% noise cushion) trips it,
+   while runner jitter alone does not. Tighten the cushion toward the
+   raw 10% target if the runner proves stable across several `main` runs.
 3. Commit as `chore(perf): reseed #11 baseline from ubuntu-latest`.
 
 Bump the ceilings (with justification in the commit) only for an

@@ -1,6 +1,6 @@
 {
-  "_comment": "Per-frame ns/op ceilings for the #11 perfgate. PROVISIONAL: seeded at the 60 fps realtime budget (16.64 ms) pending a reseed from ubuntu-latest CI. Reseed recipe: docs/perf-baseline.md.",
-  "BenchmarkFrame_HelloBG":   { "ns_op_max": 16639267 },
-  "BenchmarkFrame_OAMGrid":   { "ns_op_max": 16639267 },
-  "BenchmarkFrame_MMC3Split": { "ns_op_max": 16639267 }
+  "_comment": "Per-frame ns/op ceilings for the #11 perfgate. Reseeded from ubuntu-latest CI (feat/11-perfgate, run 28893534177): observed 3.39/3.48/3.60 ms/frame, set to observed x ~1.05 as a shared-runner-noise cushion. With the 1.10 gate tolerance, a clean run sits ~15% under the fail line. Reseed recipe: docs/perf-baseline.md.",
+  "BenchmarkFrame_HelloBG":   { "ns_op_max": 3560000 },
+  "BenchmarkFrame_OAMGrid":   { "ns_op_max": 3655000 },
+  "BenchmarkFrame_MMC3Split": { "ns_op_max": 3780000 }
 }
