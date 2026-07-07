@@ -205,4 +205,7 @@ jobs:
           cache: true
 
       - name: Run perf gate (#11)
-        run: go test -tags=perfgate -timeout 5m -run TestPerfGate ./...
+        # -v so the per-frame ns + realtime-multiple headroom lines show in
+        # the job log (they're t.Logf, suppressed without -v on a pass) —
+        # visible to reviewers + used to reseed the baseline (docs/perf-baseline.md).
+        run: go test -tags=perfgate -v -timeout 5m -run TestPerfGate ./...
