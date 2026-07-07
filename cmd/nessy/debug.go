@@ -72,6 +72,7 @@ const (
 	stepScanlineCommand = "nessy/stepScanline"
 	stepFrameCommand    = "nessy/stepFrame"
 	runToNMICommand     = "nessy/runToNMI"
+	runToIRQCommand     = "nessy/runToIRQ"
 	clearStepCommand    = "nessy/clearStep"
 )
 
@@ -87,7 +88,9 @@ const (
 )
 
 // memBreakpointArgs is the setMemBreakpoint request body. Space is
-// "ppu" (PPU bus $0000-$3FFF) or "reg" (PPU register $2000-$2007).
+// "ppu" (PPU bus $0000-$3FFF), "reg" (PPU register $2000-$2007), or
+// "cpureg" (CPU register window $4000-$4017 — APU + $4014 OAMDMA +
+// $4016/$4017 joypad, #53).
 type memBreakpointArgs struct {
 	Space string `json:"space"`
 	Addr  uint16 `json:"addr"`
@@ -267,6 +270,9 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server, heatma
 		case runToNMICommand:
 			srv.SetStopPredicate(runToNMIPredicate(bus))
 			return map[string]string{"armed": "nmi"}, true, nil
+		case runToIRQCommand:
+			srv.SetStopPredicate(runToIRQPredicate(bus))
+			return map[string]string{"armed": "irq"}, true, nil
 		case clearStepCommand:
 			srv.SetStopPredicate(nil)
 			return map[string]string{"armed": "none"}, true, nil
@@ -280,15 +286,27 @@ func debugRequestHandler(bus *nesBus, tracer *nesTracer, srv *dap.Server, heatma
 				bus.ppu.SetPPUBusBreakpoint(a.Addr, a.Read, a.Write)
 			case "reg":
 				bus.ppu.SetRegBreakpoint(a.Addr, a.Read, a.Write)
+			case "cpureg":
+				if !bus.dbus.regBP.set(a.Addr, a.Read, a.Write) {
+					return nil, true, fmt.Errorf("setMemBreakpoint: cpureg addr $%04X out of the $4000-$4017 window", a.Addr)
+				}
 			default:
-				return nil, true, fmt.Errorf("setMemBreakpoint: unknown space %q (want ppu|reg)", a.Space)
+				return nil, true, fmt.Errorf("setMemBreakpoint: unknown space %q (want ppu|reg|cpureg)", a.Space)
 			}
 			return map[string]any{"space": a.Space, "addr": a.Addr, "read": a.Read, "write": a.Write}, true, nil
 		case clearMemBreakpointsCommand:
 			bus.ppu.ClearBreakpoints()
+			bus.dbus.regBP.clear()
 			return map[string]bool{"cleared": true}, true, nil
 		case armBreakpointStopCommand:
-			srv.SetStopPredicate(func() bool { return bus.ppu.TakePendingStop() })
+			// Drains both typed-breakpoint sinks: PPU bus/registers (#49)
+			// and the CPU register window $4000-$4017 (#53). Call both so
+			// neither latch is left set (|| would short-circuit).
+			srv.SetStopPredicate(func() bool {
+				ppuHit := bus.ppu.TakePendingStop()
+				regHit := bus.dbus.regBP.takePendingStop()
+				return ppuHit || regHit
+			})
 			return map[string]string{"armed": "breakpoint"}, true, nil
 		case heatmapStartCommand:
 			heatmap.start()

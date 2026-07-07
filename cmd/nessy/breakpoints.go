@@ -2,7 +2,10 @@
 
 package main
 
-import "github.com/nkane/chippy/expr"
+import (
+	"github.com/nkane/chippy/cpu"
+	"github.com/nkane/chippy/expr"
+)
 
 // nessyHostVars exposes NES PPU timing to chippy's expression evaluator
 // (chippy#433) so conditional breakpoints + watch / evaluate expressions
@@ -46,6 +49,27 @@ func runToNMIPredicate(bus *nesBus) func() bool {
 	prev := bus.ppu.NMILine()
 	return func() bool {
 		cur := bus.ppu.NMILine()
+		rising := cur && !prev
+		prev = cur
+		return rising
+	}
+}
+
+// runToIRQPredicate stops when the CPU is about to service a hardware IRQ
+// — a mapper (MMC3/MMC5), APU frame-counter, or DMC IRQ (run-to-IRQ, #53).
+// The signal is (IRQ line asserted AND the I flag clear): the level the
+// 6502 samples to take an IRQ. That cleanly excludes BRK (a software
+// opcode, no IRQ line) and NMI (its own line + predicate). It's an edge —
+// prev captured at arm time — so arming while an IRQ is already pending
+// waits for the next assertion rather than firing on the same one, and a
+// resume after the handler sets FlagI runs on to the following IRQ.
+func runToIRQPredicate(bus *nesBus) func() bool {
+	pending := func() bool {
+		return bus.cpu.IRQAsserted() && bus.cpu.P&cpu.FlagI == 0
+	}
+	prev := pending()
+	return func() bool {
+		cur := pending()
 		rising := cur && !prev
 		prev = cur
 		return rising

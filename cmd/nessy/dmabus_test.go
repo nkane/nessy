@@ -102,3 +102,66 @@ func TestDMABus_DummyRead_HitsBus(t *testing.T) {
 		t.Errorf("haltAddr = $%04X; want $2007 (captured from dummy read)", db.haltAddr)
 	}
 }
+
+// --- CPU-register-window breakpoints ($4000-$4017), #53 ---
+
+// The cpuRegBreakpoints sink latches a pending stop on a matching
+// direction, ignores the other direction, honors the range, and clears.
+func TestCPURegBreakpoints_SetCheckClear(t *testing.T) {
+	var bp cpuRegBreakpoints
+	if bp.set(0x2000, true, true) {
+		t.Error("set accepted $2000 (outside the $4000-$4017 window)")
+	}
+	if !bp.set(0x4015, true, false) { // break on read of $4015
+		t.Fatal("set rejected in-window $4015")
+	}
+
+	bp.check(0x4015, true) // a write — wrong direction, no latch
+	if bp.takePendingStop() {
+		t.Error("write to a read-only breakpoint latched a stop")
+	}
+	bp.check(0x4015, false) // a read — matches
+	if !bp.takePendingStop() {
+		t.Error("read of an armed breakpoint did not latch a stop")
+	}
+	if bp.takePendingStop() {
+		t.Error("takePendingStop did not clear the latch")
+	}
+
+	// Clearing both directions removes the breakpoint.
+	bp.set(0x4015, false, false)
+	bp.check(0x4015, false)
+	if bp.takePendingStop() {
+		t.Error("breakpoint fired after being cleared via set(false,false)")
+	}
+
+	bp.set(0x4016, false, true)
+	bp.clear()
+	bp.check(0x4016, true)
+	if bp.takePendingStop() {
+		t.Error("breakpoint fired after clear()")
+	}
+}
+
+// A real CPU read/write through dmaBus trips the breakpoint; a DMA-path
+// fetch (dmaActive) of the same address does not — a user breakpoint means
+// "my program touched this register", not the DMA unit's internal fetch.
+func TestDMABus_RegBreakpoint_SuppressedDuringDMA(t *testing.T) {
+	db, _ := newTestDMABus()
+	db.regBP.set(0x4016, true, true)
+
+	db.Write(0x4016, 0x01) // architectural CPU write → latch
+	if !db.regBP.takePendingStop() {
+		t.Fatal("CPU write to $4016 did not latch a stop")
+	}
+	db.Read(0x4016) // architectural CPU read → latch
+	if !db.regBP.takePendingStop() {
+		t.Fatal("CPU read of $4016 did not latch a stop")
+	}
+
+	// A DMA sprite read routes through Read with dmaActive set → suppressed.
+	db.ReadDma(0x4016, cpu.DmaSpriteRead)
+	if db.regBP.takePendingStop() {
+		t.Error("DMA-path read of $4016 latched a stop (should be suppressed)")
+	}
+}

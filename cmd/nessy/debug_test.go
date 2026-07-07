@@ -186,6 +186,7 @@ func TestDebugRequestHandler(t *testing.T) {
 		{stepScanlineCommand, "scanline"},
 		{stepFrameCommand, "frame"},
 		{runToNMICommand, "nmi"},
+		{runToIRQCommand, "irq"},
 		{clearStepCommand, "none"},
 	} {
 		body, handled, err := h(tc.cmd, nil)
@@ -203,6 +204,13 @@ func TestDebugRequestHandler(t *testing.T) {
 	}
 	if _, handled, err := h(setMemBreakpointCommand, []byte(`{"space":"reg","addr":8192,"read":true}`)); err != nil || !handled {
 		t.Fatalf("setMemBreakpoint reg: handled=%v err=%v", handled, err)
+	}
+	// cpureg: $4015 write (16405 = 0x4015) is in-window; out-of-window errors (#53).
+	if _, handled, err := h(setMemBreakpointCommand, []byte(`{"space":"cpureg","addr":16405,"write":true}`)); err != nil || !handled {
+		t.Fatalf("setMemBreakpoint cpureg: handled=%v err=%v", handled, err)
+	}
+	if _, _, err := h(setMemBreakpointCommand, []byte(`{"space":"cpureg","addr":8192,"write":true}`)); err == nil {
+		t.Error("setMemBreakpoint cpureg out-of-window: err=nil; want error")
 	}
 	if _, _, err := h(setMemBreakpointCommand, []byte(`{"space":"bogus","addr":0}`)); err == nil {
 		t.Error("setMemBreakpoint bogus space: err=nil; want error")

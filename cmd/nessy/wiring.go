@@ -29,6 +29,7 @@ type nesBus struct {
 	mmio   *cpu.MMIO
 	ram    *cpu.RAM
 	cart   cart.Cartridge
+	dbus   *dmaBus    // CPU-bus wrapper; owns the $4000-$4017 breakpoints (#53)
 	timing nes.Timing // region clock + frame geometry (NTSC default)
 }
 
@@ -166,7 +167,8 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 	// cpu.DmaKind tag (chippy#481 DmaReadBus seam) and the 2A03 DMA-read
 	// internal-register conflict (#20) is reproduced. Pure pass-through
 	// for non-DMA reads, so normal play is byte-identical.
-	processor.SetBus(newDMABus(mmio, timing.CPUClockHz == nes.PAL.CPUClockHz))
+	dbus := newDMABus(mmio, timing.CPUClockHz == nes.PAL.CPUClockHz)
+	processor.SetBus(dbus)
 
 	// Wire master-clock-deadline PPU advance + flip PPU into cpuDriven
 	// mode so MMIO's Ticker fan-out stops double-advancing. CPU.read /
@@ -190,6 +192,7 @@ func buildNES(rom *nes.ROM) (*nesBus, error) {
 		mmio:   mmio,
 		ram:    ram,
 		cart:   c,
+		dbus:   dbus,
 		timing: timing,
 	}, nil
 }
