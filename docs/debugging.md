@@ -178,24 +178,27 @@ Built on chippy v1.5.0's host hooks (chippy#419):
 - **NES step granularity** — custom requests arm chippy's host
   stop-predicate (`SetStopPredicate`): `nessy/stepScanline` (run to the
   next scanline), `nessy/stepFrame` (next frame), `nessy/runToNMI` (next
-  /NMI rising edge), `nessy/clearStep` (disarm). The client arms one,
-  sends `continue`, and clears it when the `stopped` event arrives.
+  /NMI rising edge), `nessy/runToIRQ` (next hardware IRQ — mapper / APU
+  frame / DMC; fires when the IRQ line is asserted with the I flag clear,
+  so it skips BRK and NMI), `nessy/clearStep` (disarm). The client arms
+  one, sends `continue`, and clears it when the `stopped` event arrives.
 
 **Typed breakpoints** ([#49](https://github.com/nkane/nessy/issues/49))
 cover the address spaces chippy's CPU-bus breakpoints can't reach:
 
 - `nessy/setMemBreakpoint` `{ space, addr, read, write }` — `space` is
-  `"ppu"` (PPU bus `$0000-$3FFF`: CHR / nametable / palette) or `"reg"`
-  (PPU register `$2000-$2007`). `nessy/clearMemBreakpoints` removes them.
+  `"ppu"` (PPU bus `$0000-$3FFF`: CHR / nametable / palette), `"reg"`
+  (PPU register `$2000-$2007`), or `"cpureg"` (the CPU register window
+  `$4000-$4017` — APU + `$4014` OAMDMA + `$4016/$4017` joypad, checked at
+  the `dmaBus` CPU-bus chokepoint; #53). `nessy/clearMemBreakpoints`
+  removes them all.
 - A matching access latches a pending stop; `nessy/armBreakpointStop`
   wires the host stop-predicate to drain it (so the run halts at the
   next instruction boundary). It shares the predicate slot with the step
   modes — arm one at a time; `nessy/clearStep` disarms either.
 - Hot-path checks are gated, so an access costs nothing until a
-  breakpoint is set.
-
-run-to-IRQ + breakpoints on the APU / joypad registers (`$4000-$4017`)
-are a follow-up.
+  breakpoint is set. `cpureg` breakpoints are suppressed during a DMC/OAM
+  DMA fetch so the DMA unit's internal reads don't trip a user break.
 
 ## Live demo
 

@@ -23,6 +23,18 @@ import "github.com/nkane/chippy/cpu"
 type dmaBus struct {
 	*cpu.MMIO
 
+	// regBP holds the CPU-register-window ($4000-$4017) breakpoints (#53).
+	// dmaBus is the single chokepoint every CPU bus access passes through,
+	// so it checks each read/write here — the APU/DMA/joypad analogue of
+	// the PPU's own #49 register breakpoints. Never nil (newDMABus inits
+	// it); the check is a cheap flag test until a breakpoint is armed.
+	regBP *cpuRegBreakpoints
+	// dmaActive suppresses regBP checks while a DMC/OAM DMA fetch is in
+	// flight (ReadDma calls back into Read for its dummy/redirected
+	// reads). A user breakpoint means "my program touched this register",
+	// not "the DMA unit's internal fetch did".
+	dmaActive bool
+
 	// openBus is the last value driven on the external CPU data bus.
 	// Internal-register reads ($4015-$4017) do NOT update it.
 	openBus byte
@@ -41,13 +53,16 @@ type dmaBus struct {
 
 // newDMABus wraps mmio. region PAL flag tunes the $4016/$4017 path.
 func newDMABus(mmio *cpu.MMIO, isPAL bool) *dmaBus {
-	return &dmaBus{MMIO: mmio, isPAL: isPAL}
+	return &dmaBus{MMIO: mmio, isPAL: isPAL, regBP: &cpuRegBreakpoints{}}
 }
 
 // Read forwards to MMIO and latches the value as external open bus.
 func (b *dmaBus) Read(addr uint16) byte {
 	v := b.MMIO.Read(addr)
 	b.openBus = v
+	if !b.dmaActive {
+		b.regBP.check(addr, false)
+	}
 	return v
 }
 
@@ -56,6 +71,9 @@ func (b *dmaBus) Read(addr uint16) byte {
 func (b *dmaBus) Write(addr uint16, v byte) {
 	b.MMIO.Write(addr, v)
 	b.openBus = v
+	if !b.dmaActive {
+		b.regBP.check(addr, true)
+	}
 }
 
 // ReadDma routes a DMA-window bus read. The halt-cycle and alignment
@@ -65,6 +83,11 @@ func (b *dmaBus) Write(addr uint16, v byte) {
 // sprite read is an ordinary external read. The DMC sample read runs
 // the ProcessDmaRead conflict formula.
 func (b *dmaBus) ReadDma(addr uint16, kind cpu.DmaKind) byte {
+	// Suppress $4000-$4017 breakpoints for the DMA's own fetches (the
+	// dummy/redirected reads below route back through Read). Restored on
+	// return so the next real CPU access is checked.
+	b.dmaActive = true
+	defer func() { b.dmaActive = false }()
 	switch kind {
 	case cpu.DmaDummyRead:
 		b.haltAddr = addr
@@ -144,3 +167,71 @@ var (
 	_ cpu.Ticker     = (*dmaBus)(nil)
 	_ cpu.Peeker     = (*dmaBus)(nil)
 )
+
+// cpuRegBreakpoint window: the 2A03 CPU register block that the APU, the
+// $4014 OAMDMA, and the $4016/$4017 joypad ports respond to. chippy's
+// CPU-bus breakpoints and the PPU-side #49 breakpoints can't cover it, so
+// dmaBus checks it directly (#53).
+const (
+	cpuRegLo = 0x4000
+	cpuRegHi = 0x4017
+)
+
+// regBPFlags records which access directions ($4000-$4017 read / write)
+// an armed breakpoint should trip on.
+type regBPFlags struct{ read, write bool }
+
+// cpuRegBreakpoints is the $4000-$4017 read/write breakpoint set, mirroring
+// the PPU's #49 breakpoint latch: a matching access sets pendingStop,
+// which the shared armBreakpointStop predicate drains via takePendingStop.
+// `has` keeps the per-access hot path to a single bool test until a
+// breakpoint is actually armed.
+type cpuRegBreakpoints struct {
+	bp          map[uint16]regBPFlags
+	has         bool
+	pendingStop bool
+}
+
+// set arms a breakpoint on addr (must be in $4000-$4017) for the given
+// directions; clearing both read+write removes it. Returns false if addr
+// is out of the CPU-register window.
+func (c *cpuRegBreakpoints) set(addr uint16, read, write bool) bool {
+	if addr < cpuRegLo || addr > cpuRegHi {
+		return false
+	}
+	if c.bp == nil {
+		c.bp = map[uint16]regBPFlags{}
+	}
+	if !read && !write {
+		delete(c.bp, addr)
+	} else {
+		c.bp[addr] = regBPFlags{read, write}
+	}
+	c.has = len(c.bp) > 0
+	return true
+}
+
+// clear removes all CPU-register breakpoints + any latched stop.
+func (c *cpuRegBreakpoints) clear() {
+	c.bp = nil
+	c.has = false
+	c.pendingStop = false
+}
+
+// check latches a pending stop if an armed breakpoint matches the access.
+func (c *cpuRegBreakpoints) check(addr uint16, write bool) {
+	if !c.has {
+		return
+	}
+	if bp, ok := c.bp[addr]; ok && ((write && bp.write) || (!write && bp.read)) {
+		c.pendingStop = true
+	}
+}
+
+// takePendingStop reports + clears whether a breakpoint has fired since
+// the last call.
+func (c *cpuRegBreakpoints) takePendingStop() bool {
+	s := c.pendingStop
+	c.pendingStop = false
+	return s
+}

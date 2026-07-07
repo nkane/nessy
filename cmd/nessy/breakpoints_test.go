@@ -2,7 +2,11 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nkane/chippy/cpu"
+)
 
 // nessyHostVars resolves the NES timing identifiers and tracks live PPU
 // state; unknown names report ok=false.
@@ -78,5 +82,41 @@ func TestRunToNMIPredicate(t *testing.T) {
 	}
 	if !fired {
 		t.Error("run-to-NMI predicate never fired within a frame of vblank")
+	}
+}
+
+// runToIRQPredicate fires on the rising edge of (IRQ asserted AND I flag
+// clear): the level the 6502 samples to take a hardware IRQ (#53). Drive
+// it directly — enable interrupts, then assert the IRQ line — so the test
+// doesn't depend on a mapper/APU IRQ source firing.
+func TestRunToIRQPredicate(t *testing.T) {
+	bus := newTestBus(t)
+	bus.cpu.P &^= cpu.FlagI // clear I so an asserted IRQ would be taken
+
+	pred := runToIRQPredicate(bus)
+	if pred() {
+		t.Fatal("predicate true before any IRQ asserted")
+	}
+	bus.cpu.AssertIRQ()
+	if !pred() {
+		t.Error("predicate did not fire on IRQ rising edge")
+	}
+	if pred() {
+		t.Error("predicate re-fired on held IRQ level (want edge only)")
+	}
+}
+
+// runToIRQPredicate must NOT fire while interrupts are disabled (I set),
+// even with the IRQ line asserted — the CPU wouldn't service it.
+func TestRunToIRQPredicate_MaskedWhenIDisabled(t *testing.T) {
+	bus := newTestBus(t)
+	bus.cpu.P |= cpu.FlagI // interrupts disabled
+	bus.cpu.AssertIRQ()
+
+	pred := runToIRQPredicate(bus)
+	for i := 0; i < 3; i++ {
+		if pred() {
+			t.Fatal("predicate fired while I flag set (IRQ masked)")
+		}
 	}
 }
