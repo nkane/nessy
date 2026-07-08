@@ -29,7 +29,7 @@ See [`mapper-compat`](mapper-compat.md) for the full per-mapper matrix with head
 
 ## In your browser
 
-[Try nessy in the browser](https://nkane.dev/chippy/playground/nessy/) — Ebiten js/wasm build with a default demo + drag-drop loader for your own ROMs.
+[Try nessy in the browser](https://nkane.dev/chippy/playground/nessy/) — the Ebiten js/wasm build with a full playground UX: drag-drop / file-picker ROM loading, gamepad + remappable keyboard, F1–F4 save slots (persisted in IndexedDB), screenshot, fullscreen, and an offline-capable PWA. Your ROM stays in the browser — nothing is uploaded. Build notes: [`web/nessy/README.md`](https://github.com/nkane/nessy/blob/main/web/nessy/README.md).
 
 ## What's next
 
