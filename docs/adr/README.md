@@ -21,6 +21,7 @@ reversed or refined are marked *Superseded by* with a link.
 | [0006](0006-v0.6.0.md) | v0.6.0 | 2026-05-24 | VRC6 audio; VRC7 cart shell; WASM playground; DMC/OAMDMA contention |
 | [0007](0007-v0.7.0.md) | v0.7.0 | 2026-05-25 | VRC7 OPLL synth; PAL/Dendy region timing; headless recorder; accuracy ROM suite |
 | [0008](0008-v0.8.0.md) | v0.8.0 | 2026-05-25 | chippy monorepo carve-out; Mesen2 cycle-precision reference; load-bearing invariants |
+| [0009](0009-v1.0.0.md) | v1.0.0 | 2026-07-10 | TUI debugger (DAP custom requests); 5 accuracy-grading paths; MMC5 PPU seam; non-linear DAC by property; perfgate; WASM playground; hand-rolled release pipeline |
 
 ## Conventions captured across releases
 
@@ -32,6 +33,10 @@ reversed or refined are marked *Superseded by* with a link.
 
 ## Forthcoming
 
-The v0.9 / v1.0 ADR — covering the post-carve DAP debugger epic, the chippy
-v1.5.0 host hooks, and the MMC5 mapper — lands when that release is tagged. The
-v1.0 epic is tracked in [issue #13](https://github.com/nkane/nessy/issues/13).
+[ADR 0009](0009-v1.0.0.md) is the **v1.0.0 release candidate** record — the DAP
+debugger epic, the chippy v1.5.0 host hooks, MMC5, the accuracy close-out, the
+perfgate, the WASM playground, and the hand-rolled release pipeline. It's
+`Accepted` and merged; the `v1.0.0` tag itself is gated on the #7 headliner
+playtest + the #8 stable-release secrets. The v1.0 epic is tracked in
+[issue #13](https://github.com/nkane/nessy/issues/13). The next ADR follows
+whenever v1.1+ opens a new architectural thread.
