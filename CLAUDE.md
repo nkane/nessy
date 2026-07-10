@@ -53,10 +53,19 @@ Every PR ships with the documentation changes its diff implies. Update
 
 - **`README.md`** — when controls, install instructions, demos, save-state
   semantics, DAP attach flow, or any user-facing behavior change.
-- **`docs/`** — `install.md`, `debugging.md`, `demos.md`, `index.md`.
+- **`docs/`** — `install.md`, `debugging.md`, `demos.md`, `index.md`,
+  `mapper-compat.md`.
 - **This file (`CLAUDE.md`)** — when load-bearing invariants change.
 - **Code-level doc comments** — when an exported type / function changes
   shape or contract.
+- **`docs/adr/`** — one ADR per released version (`NNNN-vX.Y.Z.md`),
+  Context / Decision / Consequences per decision. Capture an
+  architecturally-significant decision *in the release it ships in* (a new
+  subsystem, a protocol, a reversed earlier call — not routine bug fixes),
+  and keep `docs/adr/README.md`'s index + the "Forthcoming" note current in
+  the same PR. Mark a decision a later release reverses as *Superseded by*.
+  The in-progress release's ADR (e.g. `0009-v1.0.0.md`) is `Accepted` +
+  editable until its tag lands.
 
 ## Module structure
 
