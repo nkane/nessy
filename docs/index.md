@@ -21,9 +21,9 @@ That single command spawns nessy + dials its DAP listener + opens the TUI in att
 
 ## Mapper coverage
 
-NROM, MMC1, UxROM, CNROM, MMC3 (Sharp + NEC RevA), VRC2, VRC4, VRC6 + audio, VRC7 (cart only; OPLL FM synth in v0.7), FME-7 + Sunsoft 5B audio, MMC5 (banking + multiplier + ExRAM + per-quadrant nametables + scanline IRQ + 8x16 dual CHR + extended attributes + 2-pulse/PCM audio).
+NROM, MMC1, UxROM, CNROM, MMC3 (Sharp + NEC RevA), VRC2, VRC4, VRC6 + audio, VRC7 + OPLL FM audio, FME-7 + Sunsoft 5B audio, MMC5 (banking + multiplier + ExRAM + per-quadrant nametables + scanline IRQ + 8x16 dual CHR + extended attributes + 2-pulse/PCM audio).
 
-Headliners that now play: Super Mario Bros, Zelda 1, Final Fantasy, Metroid, Castlevania II + III JP, Mega Man 1-6, SMB3, Crisis Force, Gimmick!, Lagrange Point (silent).
+Headliners that now play: Super Mario Bros, Zelda 1, Final Fantasy, Metroid, Castlevania II + III JP, Mega Man 1-6, SMB3, Crisis Force, Gimmick!, Lagrange Point (with OPLL FM soundtrack).
 
 See [`mapper-compat`](mapper-compat.md) for the full per-mapper matrix with headliner ROMs and known gaps.
 
@@ -33,7 +33,6 @@ See [`mapper-compat`](mapper-compat.md) for the full per-mapper matrix with head
 
 ## What's next
 
-- [v0.6 epic](https://github.com/nkane/chippy/issues/305)
-- [v0.7 OPLL FM synth](https://github.com/nkane/chippy/issues/315) — Lagrange Point's soundtrack.
+- [v1.0 epic](https://github.com/nkane/nessy/issues/13) — production-quality release: full accuracy suite, MMC5, signed binaries + Homebrew/AUR, Mesen2-parity debugger, headliner playtest.
 
 See [`install`](install.md) for binaries + build instructions, [`demos`](demos.md) for the homebrew ROM suite, [`debugging`](debugging.md) for the DAP-attach workflow, and [`mapper-compat`](mapper-compat.md) for the per-mapper compatibility matrix.
