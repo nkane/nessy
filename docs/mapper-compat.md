@@ -23,7 +23,7 @@ each mapper has its own file + table-driven tests beside it.
 | 21, 22, 23, 25 | VRC2 / VRC4 | 8 KiB PRG banks, 1 KiB CHR banks, VRC4 CPU/scanline IRQ | — | Crisis Force, Gradius II (JP) | none — one chip family across four pinouts via sub-bit routing |
 | 24, 26 | VRC6a / VRC6b | 16+8 KiB PRG banks, 1 KiB CHR banks, IRQ | 2 pulse + sawtooth | Akumajou Densetsu (Castlevania III JP) | none |
 | 69 | FME-7 / Sunsoft 5B | 8 KiB PRG banks (ROM or RAM sourced), 1 KiB CHR banks, IRQ | Sunsoft 5B (3 square) | Gimmick!, Batman: Return of the Joker | none |
-| 85 | VRC7 | 8 KiB PRG banks, 1 KiB CHR banks, IRQ | YM2413 (OPLL) FM — silent | Lagrange Point | OPLL FM synth not yet wired — boots + plays silent ([chippy #315](https://github.com/nkane/chippy/issues/315)) |
+| 85 | VRC7 | 8 KiB PRG banks, 1 KiB CHR banks, IRQ | YM2413 (OPLL) 6-voice FM | Lagrange Point | none for playability — the OPLL is a *functional* float-FM synth (audible, recognisable), not a cycle-exact log/exp-LUT OPLL ([chippy #315](https://github.com/nkane/chippy/issues/315)) |
 
 ## Notes
 
@@ -34,9 +34,13 @@ each mapper has its own file + table-driven tests beside it.
 - **VRC2/4 family.** Mappers 21/22/23/25 are the same Konami silicon under
   different pinouts. Each mapper number (plus submapper) selects which CPU
   address bits carry the register sub-bits; VRC2 leaves the VRC4 IRQ silent.
-- **VRC7 audio.** The cartridge banking, CHR, and IRQ surface are complete
-  and Lagrange Point boots and plays; the YM2413 (OPLL) FM channel is the
-  one outstanding piece, tracked for v0.7.
+- **VRC7 audio.** Complete — the cartridge banking / CHR / IRQ surface
+  plus the YM2413 (OPLL) FM synth (`apu.VRC7Audio`): six melodic 2-operator
+  voices from the 15-patch instrument ROM + one user patch, so Lagrange
+  Point's soundtrack plays. It's a *functional* float-FM implementation
+  (phase + ADSR advance once per emitted sample), not a cycle-exact OPLL
+  log/exp pipeline — audible and recognisable; a bit-exact pass would be a
+  separate effort (shipped v0.7, ADR 0007).
 
 ## Adding a mapper
 
